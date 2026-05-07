@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build output
+dist/
+build/
+frontend/dist/
+
+# Runtime data
+uploads/
+backend/uploads/
+postgres-data/
+
+# Local caches
+.gocache/
+backend/.gocache/
+backend/.gomodcache/
+.vite/
+
+# Local agent/workspace metadata
+.agents/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.log

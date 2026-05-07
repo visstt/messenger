@@ -1,0 +1,115 @@
+export function renderPreview(message) {
+  if (!message) return "Сообщений пока нет";
+  if (message.deletedAt) return "Сообщение удалено";
+  if (message.kind === "image") {
+    const items = parseImageItems(message);
+    if (message.text) return message.text;
+    return items.length > 1 ? `Фото · ${items.length}` : "Фото";
+  }
+  if (message.kind === "video") return message.text || "Видео";
+  if (message.kind === "file") return message.text || message.fileName || "Файл";
+  if (message.kind === "voice") return `Голосовое · ${message.durationSec || 0}с`;
+  return message.text;
+}
+
+export function translateStatus(status) {
+  if (status === "read") return "прочитано";
+  if (status === "sent") return "отправлено";
+  if (status === "received") return "получено";
+  return status;
+}
+
+export function formatClock(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function parseImageItems(message) {
+  const urls = parseMaybeArray(message.fileUrl);
+  const names = parseMaybeArray(message.fileName);
+  return urls.map((src, index) => ({
+    src,
+    alt: names[index] || `Фото ${index + 1}`,
+  }));
+}
+
+export function parseAttachmentItems(message) {
+  const urls = parseMaybeArray(message.fileUrl);
+  const names = parseMaybeArray(message.fileName);
+  return urls.map((src, index) => {
+    const name = names[index] || src.split("/").pop() || "Файл";
+    const extension = name.includes(".") ? name.split(".").pop().toUpperCase() : "";
+    return { src, name, extension };
+  });
+}
+
+export function parseMaybeArray(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    return [value];
+  }
+  return [value];
+}
+
+export function groupMessages(messages) {
+  const grouped = [];
+
+  for (const message of messages) {
+    const previous = grouped[grouped.length - 1];
+
+    if (canMergeIntoPrevious(previous, message)) {
+      previous.items.push(message);
+      previous.fileUrl = JSON.stringify([
+        ...parseMaybeArray(previous.fileUrl),
+        ...parseMaybeArray(message.fileUrl),
+      ]);
+      previous.fileName = JSON.stringify([
+        ...parseMaybeArray(previous.fileName),
+        ...parseMaybeArray(message.fileName),
+      ]);
+      previous.status = message.status;
+      previous.createdAt = message.createdAt;
+      previous.id = message.id;
+      previous.key = `group-${previous.items.map((item) => item.id).join("-")}`;
+      previous.grouped = true;
+      previous.deletedGroup = previous.deletedAt ? true : previous.deletedGroup;
+      continue;
+    }
+
+    grouped.push({
+      ...message,
+      key: `message-${message.id}`,
+      grouped: false,
+      items: [message],
+      deletedGroup: Boolean(message.deletedAt && message.kind === "image"),
+    });
+  }
+
+  return grouped;
+}
+
+function canMergeIntoPrevious(previous, next) {
+  if (!previous) return false;
+  if (previous.senderId !== next.senderId) return false;
+  if (previous.kind !== "image" || next.kind !== "image") return false;
+
+  if (previous.deletedAt && next.deletedAt) {
+    const previousTimeDeleted = new Date(previous.createdAt).getTime();
+    const nextTimeDeleted = new Date(next.createdAt).getTime();
+    return Math.abs(nextTimeDeleted - previousTimeDeleted) <= 5000;
+  }
+
+  if (previous.deletedAt || next.deletedAt) return false;
+  if (parseImageItems(next).length !== 1) return false;
+  if (parseImageItems(previous).length !== previous.items.length) return false;
+
+  const previousTime = new Date(previous.createdAt).getTime();
+  const nextTime = new Date(next.createdAt).getTime();
+  return Math.abs(nextTime - previousTime) <= 5000;
+}
