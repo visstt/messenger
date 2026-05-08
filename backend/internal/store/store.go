@@ -24,24 +24,27 @@ type User struct {
 	Email     string    `json:"email"`
 	Bio       string    `json:"bio"`
 	AvatarURL string    `json:"avatarUrl"`
+	PublicKey string    `json:"publicKey"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
 type Message struct {
-	ID             int64      `json:"id"`
-	ChatID         int64      `json:"chatId"`
-	SenderID       int64      `json:"senderId"`
-	Kind           string     `json:"kind"`
-	Text           string     `json:"text"`
-	FileURL        string     `json:"fileUrl"`
-	FileName       string     `json:"fileName"`
-	DurationSec    int        `json:"durationSec"`
-	ReplyToMessage *int64     `json:"replyToMessageId"`
-	EditedAt       *time.Time `json:"editedAt"`
-	DeletedAt      *time.Time `json:"deletedAt"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	Sender         User       `json:"sender"`
-	Status         string     `json:"status"`
+	ID               int64      `json:"id"`
+	ChatID           int64      `json:"chatId"`
+	SenderID         int64      `json:"senderId"`
+	Kind             string     `json:"kind"`
+	Text             string     `json:"text"`
+	FileURL          string     `json:"fileUrl"`
+	FileName         string     `json:"fileName"`
+	DurationSec      int        `json:"durationSec"`
+	EncryptedPayload string     `json:"encryptedPayload"`
+	EncryptionMeta   string     `json:"encryptionMeta"`
+	ReplyToMessage   *int64     `json:"replyToMessageId"`
+	EditedAt         *time.Time `json:"editedAt"`
+	DeletedAt        *time.Time `json:"deletedAt"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	Sender           User       `json:"sender"`
+	Status           string     `json:"status"`
 }
 
 type ChatPreview struct {
@@ -49,6 +52,7 @@ type ChatPreview struct {
 	Kind         string    `json:"kind"`
 	Title        string    `json:"title"`
 	AvatarURL    string    `json:"avatarUrl"`
+	E2EEEnabled  bool      `json:"e2eeEnabled"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 	Peer         User      `json:"peer"`
 	Participants []User    `json:"participants"`
@@ -61,6 +65,7 @@ type ChatDetails struct {
 	Kind         string    `json:"kind"`
 	Title        string    `json:"title"`
 	AvatarURL    string    `json:"avatarUrl"`
+	E2EEEnabled  bool      `json:"e2eeEnabled"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 	Peer         User      `json:"peer"`
 	Participants []User    `json:"participants"`
@@ -88,6 +93,8 @@ type NewMessage struct {
 	FileURL          string
 	FileName         string
 	DurationSec      int
+	EncryptedPayload string
+	EncryptionMeta   string
 	ReplyToMessageID *int64
 }
 
@@ -108,6 +115,7 @@ CREATE TABLE IF NOT EXISTS users (
 	password_hash TEXT NOT NULL,
 	bio TEXT NOT NULL DEFAULT '',
 	avatar_url TEXT NOT NULL DEFAULT '',
+	public_key TEXT NOT NULL DEFAULT '',
 	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -116,6 +124,7 @@ CREATE TABLE IF NOT EXISTS chats (
 	kind TEXT NOT NULL DEFAULT 'private',
 	title TEXT NOT NULL DEFAULT '',
 	avatar_url TEXT NOT NULL DEFAULT '',
+	e2ee_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -136,6 +145,8 @@ CREATE TABLE IF NOT EXISTS messages (
 	file_url TEXT NOT NULL DEFAULT '',
 	file_name TEXT NOT NULL DEFAULT '',
 	duration_sec INTEGER NOT NULL DEFAULT 0,
+	encrypted_payload TEXT NOT NULL DEFAULT '',
+	encryption_meta TEXT NOT NULL DEFAULT '',
 	reply_to_message_id BIGINT REFERENCES messages(id) ON DELETE SET NULL,
 	edited_at TIMESTAMPTZ,
 	deleted_at TIMESTAMPTZ,
@@ -147,6 +158,10 @@ CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_chat_participants_user_id ON chat_participants(user_id);
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS e2ee_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS public_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS encrypted_payload TEXT NOT NULL DEFAULT '';
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS encryption_meta TEXT NOT NULL DEFAULT '';
 `
 	_, err := s.db.Exec(ctx, schema)
 	return err
@@ -236,9 +251,9 @@ func (s *Store) CreateUser(ctx context.Context, input Credentials) (User, error)
 	err = s.db.QueryRow(ctx, `
 		INSERT INTO users (name, username, email, password_hash)
 		VALUES ($1, LOWER($2), LOWER($3), $4)
-		RETURNING id, name, username, email, bio, avatar_url, created_at
+		RETURNING id, name, username, email, bio, avatar_url, public_key, created_at
 	`, strings.TrimSpace(input.Name), strings.TrimSpace(input.Username), strings.TrimSpace(input.Email), hash).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.CreatedAt)
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
 	return user, err
 }
 
@@ -246,11 +261,11 @@ func (s *Store) AuthenticateUser(ctx context.Context, identifier, password strin
 	var user User
 	var passwordHash string
 	err := s.db.QueryRow(ctx, `
-		SELECT id, name, username, email, bio, avatar_url, created_at, password_hash
+		SELECT id, name, username, email, bio, avatar_url, public_key, created_at, password_hash
 		FROM users
 		WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
 	`, strings.TrimSpace(identifier)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.CreatedAt, &passwordHash)
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt, &passwordHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrNotFound
@@ -266,10 +281,10 @@ func (s *Store) AuthenticateUser(ctx context.Context, identifier, password strin
 func (s *Store) GetUserByID(ctx context.Context, userID int64) (User, error) {
 	var user User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, name, username, email, bio, avatar_url, created_at
+		SELECT id, name, username, email, bio, avatar_url, public_key, created_at
 		FROM users
 		WHERE id = $1
-	`, userID).Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.CreatedAt)
+	`, userID).Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrNotFound
@@ -281,7 +296,7 @@ func (s *Store) GetUserByID(ctx context.Context, userID int64) (User, error) {
 
 func (s *Store) SearchUsers(ctx context.Context, currentUserID int64, query string) ([]User, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, name, username, email, bio, avatar_url, created_at
+		SELECT id, name, username, email, bio, avatar_url, public_key, created_at
 		FROM users
 		WHERE id <> $1
 		  AND (
@@ -300,7 +315,7 @@ func (s *Store) SearchUsers(ctx context.Context, currentUserID int64, query stri
 	var users []User
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -317,9 +332,9 @@ func (s *Store) UpdateProfile(ctx context.Context, userID int64, input ProfileUp
 			bio = $4,
 			avatar_url = $5
 		WHERE id = $1
-		RETURNING id, name, username, email, bio, avatar_url, created_at
+		RETURNING id, name, username, email, bio, avatar_url, public_key, created_at
 	`, userID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Username), strings.TrimSpace(input.Bio), strings.TrimSpace(input.AvatarURL)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.CreatedAt)
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
 	return user, err
 }
 
@@ -329,10 +344,100 @@ func (s *Store) UpdateAvatar(ctx context.Context, userID int64, avatarURL string
 		UPDATE users
 		SET avatar_url = $2
 		WHERE id = $1
-		RETURNING id, name, username, email, bio, avatar_url, created_at
+		RETURNING id, name, username, email, bio, avatar_url, public_key, created_at
 	`, userID, strings.TrimSpace(avatarURL)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.CreatedAt)
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
 	return user, err
+}
+
+func (s *Store) UpdatePublicKey(ctx context.Context, userID int64, publicKey string) (User, error) {
+	var user User
+	err := s.db.QueryRow(ctx, `
+		UPDATE users
+		SET public_key = $2
+		WHERE id = $1
+		RETURNING id, name, username, email, bio, avatar_url, public_key, created_at
+	`, userID, strings.TrimSpace(publicKey)).
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
+	return user, err
+}
+
+func (s *Store) EnableChatE2EE(ctx context.Context, currentUserID, chatID int64) (ChatDetails, Message, []int64, bool, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	var enabled bool
+	err = tx.QueryRow(ctx, `
+		SELECT c.e2ee_enabled
+		FROM chats c
+		JOIN chat_participants cp ON cp.chat_id = c.id AND cp.user_id = $1
+		WHERE c.id = $2
+	`, currentUserID, chatID).Scan(&enabled)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ChatDetails{}, Message{}, nil, false, ErrNotFound
+		}
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+
+	recipientIDs, err := s.GetRecipientIDs(ctx, currentUserID, chatID)
+	if err != nil {
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+
+	chatWasUpdated := false
+	var systemMessage Message
+
+	if !enabled {
+		if _, err := tx.Exec(ctx, `
+			UPDATE chats
+			SET e2ee_enabled = TRUE, updated_at = NOW()
+			WHERE id = $1
+		`, chatID); err != nil {
+			return ChatDetails{}, Message{}, nil, false, err
+		}
+
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO messages (chat_id, sender_id, kind, text)
+			VALUES ($1, $2, 'system', $3)
+			RETURNING id, chat_id, sender_id, kind, text, file_url, file_name, duration_sec, encrypted_payload, encryption_meta, reply_to_message_id, edited_at, deleted_at, created_at
+		`, chatID, currentUserID, "Шифрование сообщений включено. Кроме участников диалога никто не сможет получить к ним доступ.").Scan(
+			&systemMessage.ID,
+			&systemMessage.ChatID,
+			&systemMessage.SenderID,
+			&systemMessage.Kind,
+			&systemMessage.Text,
+			&systemMessage.FileURL,
+			&systemMessage.FileName,
+			&systemMessage.DurationSec,
+			&systemMessage.EncryptedPayload,
+			&systemMessage.EncryptionMeta,
+			&systemMessage.ReplyToMessage,
+			&systemMessage.EditedAt,
+			&systemMessage.DeletedAt,
+			&systemMessage.CreatedAt,
+		); err != nil {
+			return ChatDetails{}, Message{}, nil, false, err
+		}
+
+		user, err := s.GetUserByID(ctx, currentUserID)
+		if err != nil {
+			return ChatDetails{}, Message{}, nil, false, err
+		}
+		systemMessage.Sender = user
+		systemMessage.Status = "sent"
+		chatWasUpdated = true
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+
+	chat, err := s.GetChatDetails(ctx, currentUserID, chatID)
+	return chat, systemMessage, recipientIDs, chatWasUpdated, err
 }
 
 func (s *Store) CreateOrGetPrivateChat(ctx context.Context, currentUserID, otherUserID int64) (ChatDetails, error) {
@@ -425,12 +530,12 @@ func (s *Store) CreateGroupChat(ctx context.Context, currentUserID int64, title 
 func (s *Store) GetChatDetails(ctx context.Context, currentUserID, chatID int64) (ChatDetails, error) {
 	var chat ChatDetails
 	err := s.db.QueryRow(ctx, `
-		SELECT c.id, c.kind, c.title, c.avatar_url, c.updated_at
+		SELECT c.id, c.kind, c.title, c.avatar_url, c.e2ee_enabled, c.updated_at
 		FROM chats c
 		JOIN chat_participants self ON self.chat_id = c.id AND self.user_id = $1
 		WHERE c.id = $2
 	`, currentUserID, chatID).
-		Scan(&chat.ID, &chat.Kind, &chat.Title, &chat.AvatarURL, &chat.UpdatedAt)
+		Scan(&chat.ID, &chat.Kind, &chat.Title, &chat.AvatarURL, &chat.E2EEEnabled, &chat.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ChatDetails{}, ErrNotFound
@@ -448,7 +553,7 @@ func (s *Store) GetChatDetails(ctx context.Context, currentUserID, chatID int64)
 
 func (s *Store) ListChatParticipants(ctx context.Context, chatID int64) ([]User, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT u.id, u.name, u.username, u.email, u.bio, u.avatar_url, u.created_at
+		SELECT u.id, u.name, u.username, u.email, u.bio, u.avatar_url, u.public_key, u.created_at
 		FROM chat_participants cp
 		JOIN users u ON u.id = cp.user_id
 		WHERE cp.chat_id = $1
@@ -462,7 +567,7 @@ func (s *Store) ListChatParticipants(ctx context.Context, chatID int64) ([]User,
 	var users []User
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -477,10 +582,11 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 			c.kind,
 			c.title,
 			c.avatar_url,
+			c.e2ee_enabled,
 			c.updated_at,
-			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec,
+			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec, m.encrypted_payload, m.encryption_meta,
 			m.reply_to_message_id, m.edited_at, m.deleted_at, m.created_at,
-			su.id, su.name, su.username, su.email, su.bio, su.avatar_url, su.created_at,
+			su.id, su.name, su.username, su.email, su.bio, su.avatar_url, su.public_key, su.created_at,
 			COALESCE((
 				SELECT COUNT(*)
 				FROM messages unread
@@ -515,12 +621,12 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 	for rows.Next() {
 		var preview ChatPreview
 		var lastMessageID, lastMessageChatID, lastMessageSenderID *int64
-		var lastMessageKind, lastMessageText, lastMessageFileURL, lastMessageFileName *string
+		var lastMessageKind, lastMessageText, lastMessageFileURL, lastMessageFileName, lastMessageEncryptedPayload, lastMessageEncryptionMeta *string
 		var lastMessageDuration *int
 		var replyTo *int64
 		var editedAt, deletedAt, messageCreatedAt *time.Time
 		var senderID *int64
-		var senderName, senderUsername, senderEmail, senderBio, senderAvatar *string
+		var senderName, senderUsername, senderEmail, senderBio, senderAvatar, senderPublicKey *string
 		var senderCreatedAt *time.Time
 		var peerLastRead int64
 
@@ -529,10 +635,11 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 			&preview.Kind,
 			&preview.Title,
 			&preview.AvatarURL,
+			&preview.E2EEEnabled,
 			&preview.UpdatedAt,
-			&lastMessageID, &lastMessageChatID, &lastMessageSenderID, &lastMessageKind, &lastMessageText, &lastMessageFileURL, &lastMessageFileName, &lastMessageDuration,
+			&lastMessageID, &lastMessageChatID, &lastMessageSenderID, &lastMessageKind, &lastMessageText, &lastMessageFileURL, &lastMessageFileName, &lastMessageDuration, &lastMessageEncryptedPayload, &lastMessageEncryptionMeta,
 			&replyTo, &editedAt, &deletedAt, &messageCreatedAt,
-			&senderID, &senderName, &senderUsername, &senderEmail, &senderBio, &senderAvatar, &senderCreatedAt,
+			&senderID, &senderName, &senderUsername, &senderEmail, &senderBio, &senderAvatar, &senderPublicKey, &senderCreatedAt,
 			&preview.UnreadCount,
 			&peerLastRead,
 		); err != nil {
@@ -541,19 +648,21 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 
 		if lastMessageID != nil {
 			preview.LastMessage = &Message{
-				ID:             *lastMessageID,
-				ChatID:         derefInt64(lastMessageChatID),
-				SenderID:       derefInt64(lastMessageSenderID),
-				Kind:           derefString(lastMessageKind),
-				Text:           derefString(lastMessageText),
-				FileURL:        derefString(lastMessageFileURL),
-				FileName:       derefString(lastMessageFileName),
-				DurationSec:    derefInt(lastMessageDuration),
-				ReplyToMessage: replyTo,
-				EditedAt:       editedAt,
-				DeletedAt:      deletedAt,
-				CreatedAt:      derefTime(messageCreatedAt),
-				Status:         statusForMessage(derefInt64(lastMessageSenderID), currentUserID, *lastMessageID, peerLastRead),
+				ID:               *lastMessageID,
+				ChatID:           derefInt64(lastMessageChatID),
+				SenderID:         derefInt64(lastMessageSenderID),
+				Kind:             derefString(lastMessageKind),
+				Text:             derefString(lastMessageText),
+				FileURL:          derefString(lastMessageFileURL),
+				FileName:         derefString(lastMessageFileName),
+				DurationSec:      derefInt(lastMessageDuration),
+				EncryptedPayload: derefString(lastMessageEncryptedPayload),
+				EncryptionMeta:   derefString(lastMessageEncryptionMeta),
+				ReplyToMessage:   replyTo,
+				EditedAt:         editedAt,
+				DeletedAt:        deletedAt,
+				CreatedAt:        derefTime(messageCreatedAt),
+				Status:           statusForMessage(derefInt64(lastMessageSenderID), currentUserID, *lastMessageID, peerLastRead),
 			}
 			if senderID != nil {
 				preview.LastMessage.Sender = User{
@@ -563,6 +672,7 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 					Email:     derefString(senderEmail),
 					Bio:       derefString(senderBio),
 					AvatarURL: derefString(senderAvatar),
+					PublicKey: derefString(senderPublicKey),
 					CreatedAt: derefTime(senderCreatedAt),
 				}
 			}
@@ -596,9 +706,9 @@ func (s *Store) ListMessages(ctx context.Context, currentUserID, chatID int64, l
 
 	rows, err := s.db.Query(ctx, `
 		SELECT
-			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec,
+			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec, m.encrypted_payload, m.encryption_meta,
 			m.reply_to_message_id, m.edited_at, m.deleted_at, m.created_at,
-			u.id, u.name, u.username, u.email, u.bio, u.avatar_url, u.created_at
+			u.id, u.name, u.username, u.email, u.bio, u.avatar_url, u.public_key, u.created_at
 		FROM messages m
 		JOIN users u ON u.id = m.sender_id
 		WHERE m.chat_id = $1
@@ -614,9 +724,9 @@ func (s *Store) ListMessages(ctx context.Context, currentUserID, chatID int64, l
 	for rows.Next() {
 		var msg Message
 		if err := rows.Scan(
-			&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Kind, &msg.Text, &msg.FileURL, &msg.FileName, &msg.DurationSec,
+			&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Kind, &msg.Text, &msg.FileURL, &msg.FileName, &msg.DurationSec, &msg.EncryptedPayload, &msg.EncryptionMeta,
 			&msg.ReplyToMessage, &msg.EditedAt, &msg.DeletedAt, &msg.CreatedAt,
-			&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.CreatedAt,
+			&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.PublicKey, &msg.Sender.CreatedAt,
 		); err != nil {
 			return ChatDetails{}, nil, err
 		}
@@ -643,11 +753,11 @@ func (s *Store) CreateMessage(ctx context.Context, input NewMessage) (Message, [
 
 	var msg Message
 	err = s.db.QueryRow(ctx, `
-		INSERT INTO messages (chat_id, sender_id, kind, text, file_url, file_name, duration_sec, reply_to_message_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, chat_id, sender_id, kind, text, file_url, file_name, duration_sec, reply_to_message_id, edited_at, deleted_at, created_at
-	`, input.ChatID, input.SenderID, input.Kind, input.Text, input.FileURL, input.FileName, input.DurationSec, input.ReplyToMessageID).
-		Scan(&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Kind, &msg.Text, &msg.FileURL, &msg.FileName, &msg.DurationSec, &msg.ReplyToMessage, &msg.EditedAt, &msg.DeletedAt, &msg.CreatedAt)
+		INSERT INTO messages (chat_id, sender_id, kind, text, file_url, file_name, duration_sec, encrypted_payload, encryption_meta, reply_to_message_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		RETURNING id, chat_id, sender_id, kind, text, file_url, file_name, duration_sec, encrypted_payload, encryption_meta, reply_to_message_id, edited_at, deleted_at, created_at
+	`, input.ChatID, input.SenderID, input.Kind, input.Text, input.FileURL, input.FileName, input.DurationSec, input.EncryptedPayload, input.EncryptionMeta, input.ReplyToMessageID).
+		Scan(&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Kind, &msg.Text, &msg.FileURL, &msg.FileName, &msg.DurationSec, &msg.EncryptedPayload, &msg.EncryptionMeta, &msg.ReplyToMessage, &msg.EditedAt, &msg.DeletedAt, &msg.CreatedAt)
 	if err != nil {
 		return Message{}, nil, err
 	}
@@ -672,7 +782,7 @@ func (s *Store) ValidateNewMessage(ctx context.Context, input NewMessage) error 
 
 	switch input.Kind {
 	case "text":
-		if strings.TrimSpace(input.Text) == "" {
+		if strings.TrimSpace(input.Text) == "" && strings.TrimSpace(input.EncryptedPayload) == "" {
 			return fmt.Errorf("message text is required")
 		}
 	case "image", "video", "file", "voice":
@@ -681,6 +791,10 @@ func (s *Store) ValidateNewMessage(ctx context.Context, input NewMessage) error 
 		}
 	default:
 		return fmt.Errorf("unsupported message kind")
+	}
+
+	if strings.TrimSpace(input.EncryptedPayload) != "" && strings.TrimSpace(input.EncryptionMeta) == "" {
+		return fmt.Errorf("message encryption metadata is required")
 	}
 
 	if input.ReplyToMessageID != nil {
@@ -701,7 +815,7 @@ func (s *Store) ValidateNewMessage(ctx context.Context, input NewMessage) error 
 	return nil
 }
 
-func (s *Store) EditMessage(ctx context.Context, currentUserID, messageID int64, text string) (Message, []int64, error) {
+func (s *Store) EditMessage(ctx context.Context, currentUserID, messageID int64, text, encryptedPayload, encryptionMeta string) (Message, []int64, error) {
 	var chatID int64
 	err := s.db.QueryRow(ctx, `
 		SELECT chat_id
@@ -717,9 +831,9 @@ func (s *Store) EditMessage(ctx context.Context, currentUserID, messageID int64,
 
 	if _, err := s.db.Exec(ctx, `
 		UPDATE messages
-		SET text = $2, edited_at = NOW()
+		SET text = $2, encrypted_payload = $3, encryption_meta = $4, edited_at = NOW()
 		WHERE id = $1
-	`, messageID, strings.TrimSpace(text)); err != nil {
+	`, messageID, strings.TrimSpace(text), strings.TrimSpace(encryptedPayload), strings.TrimSpace(encryptionMeta)); err != nil {
 		return Message{}, nil, err
 	}
 
@@ -747,7 +861,7 @@ func (s *Store) DeleteMessage(ctx context.Context, currentUserID, messageID int6
 
 	if _, err := s.db.Exec(ctx, `
 		UPDATE messages
-		SET text = '', file_url = '', file_name = '', duration_sec = 0, deleted_at = NOW()
+		SET text = '', file_url = '', file_name = '', duration_sec = 0, encrypted_payload = '', encryption_meta = '', deleted_at = NOW()
 		WHERE id = $1
 	`, messageID); err != nil {
 		return Message{}, nil, err
@@ -767,9 +881,9 @@ func (s *Store) GetMessageByID(ctx context.Context, currentUserID, messageID int
 
 	err := s.db.QueryRow(ctx, `
 		SELECT
-			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec,
+			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec, m.encrypted_payload, m.encryption_meta,
 			m.reply_to_message_id, m.edited_at, m.deleted_at, m.created_at,
-			u.id, u.name, u.username, u.email, u.bio, u.avatar_url, u.created_at,
+			u.id, u.name, u.username, u.email, u.bio, u.avatar_url, u.public_key, u.created_at,
 			COALESCE((
 				SELECT MIN(COALESCE(cp.last_read_message_id, 0))
 				FROM chat_participants cp
@@ -780,9 +894,9 @@ func (s *Store) GetMessageByID(ctx context.Context, currentUserID, messageID int
 		JOIN chat_participants self ON self.chat_id = m.chat_id AND self.user_id = $1
 		WHERE m.id = $2
 	`, currentUserID, messageID).Scan(
-		&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Kind, &msg.Text, &msg.FileURL, &msg.FileName, &msg.DurationSec,
+		&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Kind, &msg.Text, &msg.FileURL, &msg.FileName, &msg.DurationSec, &msg.EncryptedPayload, &msg.EncryptionMeta,
 		&msg.ReplyToMessage, &msg.EditedAt, &msg.DeletedAt, &msg.CreatedAt,
-		&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.CreatedAt,
+		&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.PublicKey, &msg.Sender.CreatedAt,
 		&peerLastRead,
 	)
 	if err != nil {

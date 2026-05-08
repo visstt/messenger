@@ -14,7 +14,16 @@ import {
 
 const voiceRecorderOptions = { mimeType: "audio/webm" };
 
-export default function Composer({ chatId, onSendText, onSendAttachment, onSendVoice, onTyping }) {
+export default function Composer({
+  chatId,
+  isDisabled,
+  inputPlaceholder,
+  disabledTitle,
+  onSendText,
+  onSendAttachment,
+  onSendVoice,
+  onTyping,
+}) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [isSendingVoice, setIsSendingVoice] = useState(false);
@@ -101,7 +110,7 @@ export default function Composer({ chatId, onSendText, onSendAttachment, onSendV
   }
 
   async function sendVoiceDraft() {
-    if (!recordedBlob || isSendingVoice) return;
+    if (!recordedBlob || isSendingVoice || isDisabled) return;
 
     setIsSendingVoice(true);
     try {
@@ -120,7 +129,7 @@ export default function Composer({ chatId, onSendText, onSendAttachment, onSendV
         event.preventDefault();
         const nextText = text.trim();
         const nextAttachments = attachments.map((item) => item.file);
-        if (!nextText && nextAttachments.length === 0) return;
+        if (isDisabled || (!nextText && nextAttachments.length === 0)) return;
 
         setText("");
         clearAttachments();
@@ -164,13 +173,14 @@ export default function Composer({ chatId, onSendText, onSendAttachment, onSendV
         </div>
       )}
 
-      <div className="composer-row">
+      <div className="composer-row" title={disabledTitle || ""}>
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.7z"
           multiple
           hidden
+          disabled={isDisabled}
           onClick={(event) => event.stopPropagation()}
           onChange={(event) => {
             event.preventDefault();
@@ -184,16 +194,17 @@ export default function Composer({ chatId, onSendText, onSendAttachment, onSendV
           className="attach-button"
           type="button"
           aria-label="Прикрепить файл"
-          title="Прикрепить файл"
+          title={disabledTitle || "Прикрепить файл"}
+          disabled={isDisabled}
           onClick={() => fileInputRef.current?.click()}
         >
           <FiPaperclip />
         </button>
 
         <textarea
-          placeholder="Напишите сообщение"
+          placeholder={inputPlaceholder || "Напишите сообщение"}
           value={text}
-          disabled={showVoicePanel}
+          disabled={showVoicePanel || isDisabled}
           onChange={async (event) => {
             setText(event.target.value);
             await onTyping(event.target.value.trim().length > 0);
@@ -263,7 +274,7 @@ export default function Composer({ chatId, onSendText, onSendAttachment, onSendV
                 type="button"
                 className="voice-mini-button voice-mini-button-send"
                 aria-label="Отправить голосовое"
-                disabled={isSendingVoice}
+                disabled={isSendingVoice || isDisabled}
                 onClick={sendVoiceDraft}
               >
                 <FiSend />
@@ -276,8 +287,8 @@ export default function Composer({ chatId, onSendText, onSendAttachment, onSendV
           className={`ghost-button voice-toggle ${isRecordingInProgress ? "danger-button is-recording" : ""}`}
           type="button"
           aria-label={isRecordingInProgress ? "Остановить запись" : "Записать голосовое"}
-          title={isRecordingInProgress ? "Остановить запись" : "Записать голосовое"}
-          disabled={isProcessingStartRecording || hasVoiceDraft}
+          title={disabledTitle || (isRecordingInProgress ? "Остановить запись" : "Записать голосовое")}
+          disabled={isProcessingStartRecording || hasVoiceDraft || isDisabled}
           onClick={() => {
             if (isRecordingInProgress) {
               stopRecording();
@@ -290,8 +301,14 @@ export default function Composer({ chatId, onSendText, onSendAttachment, onSendV
           {isRecordingInProgress ? <FiSquare /> : <FiMic />}
         </button>
 
-        <button className="primary-button" type="submit" disabled={showVoicePanel}>
-          Отправить
+        <button
+          className="primary-button composer-send-button"
+          type="submit"
+          disabled={showVoicePanel || isDisabled}
+          aria-label="Отправить сообщение"
+          title={disabledTitle || "Отправить сообщение"}
+        >
+          <FiSend />
         </button>
       </div>
     </form>

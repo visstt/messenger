@@ -12,12 +12,25 @@ import ProfileEditorModal from "./components/modals/ProfileEditorModal";
 import ProfileModal from "./components/modals/ProfileModal";
 import GroupChatModal from "./components/modals/GroupChatModal";
 import SearchModal from "./components/modals/SearchModal";
+import E2EEModal from "./components/modals/E2EEModal";
 import ToastViewport from "./components/ToastViewport";
 import { api } from "./lib/api";
+import {
+  canEncryptForChat,
+  decryptMessage,
+  ensureDeviceKeys,
+  encryptAttachmentMessage,
+  encryptTextMessage,
+  hasLocalPrivateKey,
+} from "./lib/e2ee";
 
 const emptyProfile = { name: "", username: "", bio: "", avatarUrl: "" };
 
 export default function App() {
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 960px)").matches;
+  });
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") return "light";
     return window.localStorage.getItem("messenger-theme") || "light";
@@ -28,6 +41,8 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [chats, setChats] = useState([]);
   const [activeChat, setActiveChat] = useState(null);
+  const [sidebarTab, setSidebarTab] = useState("chats");
+  const [mobileScreen, setMobileScreen] = useState("sidebar");
   const [messages, setMessages] = useState([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -47,11 +62,17 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [profileDraft, setProfileDraft] = useState(emptyProfile);
   const [loadingChatId, setLoadingChatId] = useState(null);
+  const [e2eeError, setE2eeError] = useState("");
+  const [e2eeModalOpen, setE2eeModalOpen] = useState(false);
   const socketRef = useRef(null);
   const activeChatIdRef = useRef(null);
 
   const activeTyping = activeChat ? typingState[activeChat.id] : false;
   const welcomeChat = useMemo(() => chats[0], [chats]);
+  const activeChatSecurity = useMemo(
+    () => getChatSecurityState(activeChat, currentUser, e2eeError),
+    [activeChat, currentUser, e2eeError]
+  );
 
   useEffect(() => {
     activeChatIdRef.current = activeChat?.id ?? null;
@@ -65,6 +86,24 @@ export default function App() {
   useEffect(() => {
     bootstrap();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const mediaQuery = window.matchMedia("(max-width: 960px)");
+    const handleChange = (event) => {
+      setIsMobile(event.matches);
+      if (!event.matches) {
+        setMobileScreen("sidebar");
+      } else if (!activeChat || sidebarTab !== "chats") {
+        setMobileScreen("sidebar");
+      }
+    };
+
+    setIsMobile(mediaQuery.matches);
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [activeChat, sidebarTab]);
 
   useEffect(() => {
     if (!currentUser) return undefined;
@@ -82,25 +121,34 @@ export default function App() {
         const activeId = activeChatIdRef.current;
 
         if (payload.type === "message:upsert") {
-          const message = payload.data.message;
+          const message = await hydrateMessage(payload.data.message, { includeFiles: true });
           const eventChatId = Number(payload.data.chatId);
-          const messageChatId = Number(message?.chatId);
-          const isActiveChatMessage =
-            Number.isFinite(eventChatId) &&
-            eventChatId === Number(activeId) &&
-            messageChatId === eventChatId;
+          const isActiveChatMessage = eventChatId === Number(activeId);
 
           if (isActiveChatMessage) {
             setMessages((prev) => upsertMessage(prev, message));
-            if (message.senderId !== currentUser.id) {
+            if (message.senderId !== currentUser.id && message.kind !== "system") {
               api.markRead(eventChatId).catch(() => null);
             }
           }
-          fetchChats(undefined, { syncActive: false }).catch(() => null);
+          fetchChats(activeId, { syncActive: Boolean(activeId) }).catch(() => null);
         }
 
         if (payload.type === "chat:created") {
-          fetchChats(undefined, { syncActive: false }).catch(() => null);
+          fetchChats(activeId, { syncActive: Boolean(activeId) }).catch(() => null);
+        }
+
+        if (payload.type === "chat:e2ee") {
+          const eventChatId = Number(payload.data.chatId);
+          const nextChat = payload.data.chat;
+
+          setChats((prev) =>
+            prev.map((chat) => (Number(chat.id) === eventChatId ? { ...chat, ...nextChat } : chat))
+          );
+
+          if (eventChatId === Number(activeId)) {
+            setActiveChat((prev) => (prev ? { ...prev, ...nextChat } : prev));
+          }
         }
 
         if (payload.type === "chat:typing") {
@@ -114,7 +162,11 @@ export default function App() {
           const eventChatId = Number(payload.data.chatId);
           fetchChats(activeId, { syncActive: Boolean(activeId) }).catch(() => null);
           if (eventChatId === Number(activeId)) {
-            setMessages((prev) => prev.map((message) => ({ ...message, status: "read" })));
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.senderId === currentUser.id ? { ...message, status: "read" } : message
+              )
+            );
           }
         }
       };
@@ -226,10 +278,10 @@ export default function App() {
   async function bootstrap() {
     try {
       const me = await api.me();
-      applyUserSession(me.user);
+      await establishSecureSession(me.user);
 
       const nextChats = await fetchChats();
-      if (nextChats[0]) {
+      if (!isMobile && nextChats[0]) {
         await openChat(nextChats[0].id, { markRead: true, forceScroll: true });
       }
     } catch {
@@ -249,10 +301,33 @@ export default function App() {
     });
   }
 
+  async function establishSecureSession(user) {
+    try {
+      const secureUser = await ensureDeviceKeys(user, api);
+      applyUserSession(secureUser);
+      setE2eeError("");
+      return secureUser;
+    } catch (err) {
+      applyUserSession(user);
+      setE2eeError(err.message);
+      return user;
+    }
+  }
+
+  async function hydrateMessage(message, options = {}) {
+    if (!message || !currentUser || message.kind === "system") return message;
+    return decryptMessage(message, currentUser.id, options);
+  }
+
   async function fetchChats(preferredChatId, options = {}) {
     const { syncActive = true } = options;
     const data = await api.listChats();
-    const nextChats = data.items || [];
+    const nextChats = await Promise.all(
+      (data.items || []).map(async (chat) => ({
+        ...chat,
+        lastMessage: chat.lastMessage ? await hydrateMessage(chat.lastMessage) : chat.lastMessage,
+      }))
+    );
     setChats(nextChats);
 
     const targetId = preferredChatId ?? activeChatIdRef.current;
@@ -281,12 +356,18 @@ export default function App() {
       const safeItems = (data.items || []).filter(
         (message) => Number(message.chatId) === Number(data.chat.id)
       );
+      const hydratedItems = await Promise.all(
+        safeItems.map((message) => hydrateMessage(message, { includeFiles: true }))
+      );
       setActiveChat({
         ...data.chat,
         forceScroll,
       });
+      if (isMobile) {
+        setMobileScreen("chat");
+      }
       activeChatIdRef.current = Number(data.chat.id);
-      setMessages(safeItems);
+      setMessages(hydratedItems);
 
       if (markRead) {
         await api.markRead(chatId);
@@ -319,10 +400,10 @@ export default function App() {
               password: formData.get("password"),
             });
 
-      applyUserSession(payload.user);
+      await establishSecureSession(payload.user);
 
       const nextChats = await fetchChats();
-      if (nextChats[0]) {
+      if (!isMobile && nextChats[0]) {
         await openChat(nextChats[0].id, { markRead: true, forceScroll: true });
       }
     } catch (err) {
@@ -343,6 +424,29 @@ export default function App() {
     setGroupOpen(false);
     setGroupSelectedUsers([]);
     setImageViewer(null);
+    setMobileScreen("sidebar");
+    setSidebarTab("chats");
+    setE2eeError("");
+    setE2eeModalOpen(false);
+  }
+
+  async function enableE2EEForActiveChat() {
+    if (!activeChat?.id) return;
+    try {
+      const response = await api.enableChatE2EE(activeChat.id);
+      setActiveChat((prev) => (prev ? { ...prev, ...response.chat } : prev));
+      setChats((prev) =>
+        prev.map((chat) =>
+          Number(chat.id) === Number(response.chat.id) ? { ...chat, ...response.chat } : chat
+        )
+      );
+      setE2eeModalOpen(false);
+      if (response.changed) {
+        pushToast("Сквозное шифрование включено");
+      }
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
   async function startChat(userId) {
@@ -399,7 +503,14 @@ export default function App() {
 
   async function sendText(text, replyToMessageId) {
     if (!activeChat || !text.trim()) return;
-    await api.sendTextMessage(activeChat.id, { text, replyToMessageId });
+    if (activeChatSecurity.mode !== "enabled") {
+      await api.sendTextMessage(activeChat.id, { text: text.trim(), replyToMessageId });
+      await refreshActiveChat({ forceScroll: true });
+      return;
+    }
+
+    const encrypted = await encryptTextMessage({ text: text.trim(), chat: activeChat });
+    await api.sendTextMessage(activeChat.id, { ...encrypted, replyToMessageId });
     await refreshActiveChat({ forceScroll: true });
   }
 
@@ -414,35 +525,85 @@ export default function App() {
       (file) => !file.type.startsWith("image/") && !file.type.startsWith("video/")
     );
 
-    if (images.length > 0) {
-      const formData = new FormData();
-      images.forEach((file) => formData.append("file", file));
-      if (trimmedCaption) {
-        formData.append("text", trimmedCaption);
-        captionUsed = true;
+    if (activeChatSecurity.mode !== "enabled") {
+      if (images.length > 0) {
+        const formData = new FormData();
+        images.forEach((file) => formData.append("file", file));
+        if (trimmedCaption) {
+          formData.append("text", trimmedCaption);
+          captionUsed = true;
+        }
+        if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
+        await api.sendImageMessage(activeChat.id, formData);
       }
+
+      for (const file of videos) {
+        const formData = new FormData();
+        formData.append("file", file);
+        if (trimmedCaption && !captionUsed) {
+          formData.append("text", trimmedCaption);
+          captionUsed = true;
+        }
+        if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
+        await api.sendVideoMessage(activeChat.id, formData);
+      }
+
+      for (const file of otherFiles) {
+        const formData = new FormData();
+        formData.append("file", file);
+        if (trimmedCaption && !captionUsed) {
+          formData.append("text", trimmedCaption);
+          captionUsed = true;
+        }
+        if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
+        await api.sendFileMessage(activeChat.id, formData);
+      }
+
+      await refreshActiveChat({ forceScroll: true });
+      return;
+    }
+
+    if (images.length > 0) {
+      const encrypted = await encryptAttachmentMessage({
+        chat: activeChat,
+        caption: trimmedCaption,
+        files: images,
+      });
+      const formData = new FormData();
+      encrypted.encryptedFiles.forEach((file) => formData.append("file", file));
+      formData.append("encryptedPayload", encrypted.encryptedPayload);
+      formData.append("encryptionMeta", encrypted.encryptionMeta);
+      captionUsed = trimmedCaption.length > 0;
       if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
       await api.sendImageMessage(activeChat.id, formData);
     }
 
     for (const file of videos) {
+      const encrypted = await encryptAttachmentMessage({
+        chat: activeChat,
+        caption: trimmedCaption && !captionUsed ? trimmedCaption : "",
+        files: [file],
+      });
       const formData = new FormData();
-      formData.append("file", file);
-      if (trimmedCaption && !captionUsed) {
-        formData.append("text", trimmedCaption);
-        captionUsed = true;
-      }
+      formData.append("file", encrypted.encryptedFiles[0]);
+      formData.append("encryptedPayload", encrypted.encryptedPayload);
+      formData.append("encryptionMeta", encrypted.encryptionMeta);
+      if (trimmedCaption && !captionUsed) captionUsed = true;
       if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
       await api.sendVideoMessage(activeChat.id, formData);
     }
 
     for (const file of otherFiles) {
+      const encrypted = await encryptAttachmentMessage({
+        chat: activeChat,
+        caption: trimmedCaption && !captionUsed ? trimmedCaption : "",
+        files: [file],
+      });
       const formData = new FormData();
-      formData.append("file", file);
-      if (trimmedCaption && !captionUsed) {
-        formData.append("text", trimmedCaption);
-        captionUsed = true;
-      }
+      formData.append("file", encrypted.encryptedFiles[0]);
+      formData.append("encryptedPayload", encrypted.encryptedPayload);
+      formData.append("encryptionMeta", encrypted.encryptionMeta);
+      if (trimmedCaption && !captionUsed) captionUsed = true;
       if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
       await api.sendFileMessage(activeChat.id, formData);
     }
@@ -452,9 +613,28 @@ export default function App() {
 
   async function sendVoice(blob, durationSec, replyToMessageId) {
     if (!activeChat || !blob) return;
+    if (activeChatSecurity.mode !== "enabled") {
+      const formData = new FormData();
+      formData.append("file", blob, `voice-${Date.now()}.webm`);
+      formData.append("durationSec", String(durationSec || 0));
+      if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
+      await api.sendVoiceMessage(activeChat.id, formData);
+      await refreshActiveChat({ forceScroll: true });
+      return;
+    }
+
+    const voiceFile = new File([blob], `voice-${Date.now()}.webm`, {
+      type: blob.type || "audio/webm",
+    });
+    const encrypted = await encryptAttachmentMessage({
+      chat: activeChat,
+      files: [voiceFile],
+      durationSec: Number(durationSec || 0),
+    });
     const formData = new FormData();
-    formData.append("file", blob, `voice-${Date.now()}.webm`);
-    formData.append("durationSec", String(durationSec || 0));
+    formData.append("file", encrypted.encryptedFiles[0]);
+    formData.append("encryptedPayload", encrypted.encryptedPayload);
+    formData.append("encryptionMeta", encrypted.encryptionMeta);
     if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
     await api.sendVoiceMessage(activeChat.id, formData);
     await refreshActiveChat({ forceScroll: true });
@@ -509,7 +689,12 @@ export default function App() {
       return;
     }
 
-    await api.editMessage(editDialog.message.id, nextText);
+    if (activeChatSecurity.mode !== "enabled") {
+      await api.editMessage(editDialog.message.id, { text: nextText });
+    } else {
+      const encrypted = await encryptTextMessage({ text: nextText, chat: activeChat });
+      await api.editMessage(editDialog.message.id, encrypted);
+    }
     setEditDialog(null);
     await refreshActiveChat();
     pushToast("Сообщение обновлено");
@@ -548,6 +733,17 @@ export default function App() {
     setToasts((prev) => [...prev, { id: Date.now() + Math.random(), message }]);
   }
 
+  function handleSidebarTabChange(nextTab) {
+    setSidebarTab(nextTab);
+    if (isMobile) {
+      setMobileScreen("sidebar");
+    }
+  }
+
+  function handleMobileBack() {
+    setMobileScreen("sidebar");
+  }
+
   if (booting) {
     return <div className="boot-screen">Подготавливаем приложение...</div>;
   }
@@ -564,12 +760,20 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${isMobile ? "is-mobile" : ""} ${
+        isMobile && sidebarTab === "chats" && mobileScreen === "chat"
+          ? "mobile-chat-open"
+          : "mobile-sidebar-open"
+      }`}
+    >
       <Sidebar
         currentUser={currentUser}
         chats={chats}
         activeChatId={activeChat?.id}
+        activeTab={sidebarTab}
         error={error}
+        onTabChange={handleSidebarTabChange}
         onOpenProfile={() => setProfileOpen(true)}
         onOpenSearch={() => setSearchOpen(true)}
         onOpenGroup={() => setGroupOpen(true)}
@@ -577,13 +781,22 @@ export default function App() {
       />
 
       <main className="chat-panel">
-        {activeChat ? (
+        {sidebarTab === "calls" ? (
+          <div className="empty-stage empty-stage-compact">
+            <p className="eyebrow">Раздел в работе</p>
+            <h2>Звонки появятся позже</h2>
+            <p>Пока здесь ничего не добавлено, переключение между вкладками уже работает.</p>
+          </div>
+        ) : activeChat ? (
           <>
             <ChatHeader
               chat={activeChat}
               activeTyping={activeTyping}
               loading={loadingChatId === activeChat.id}
+              securityState={activeChatSecurity}
+              onOpenE2EE={() => setE2eeModalOpen(true)}
               onOpenProfile={() => setPeerProfileOpen(true)}
+              onBack={isMobile ? handleMobileBack : undefined}
             />
 
             <MessageList
@@ -598,6 +811,9 @@ export default function App() {
 
             <Composer
               chatId={activeChat.id}
+              isDisabled={!activeChatSecurity.canSend}
+              inputPlaceholder={activeChatSecurity.composerPlaceholder}
+              disabledTitle={activeChatSecurity.disabledTitle}
               onSendText={sendText}
               onSendAttachment={sendAttachment}
               onSendVoice={sendVoice}
@@ -699,6 +915,13 @@ export default function App() {
         onSubmit={submitEditMessage}
       />
 
+      <E2EEModal
+        open={e2eeModalOpen}
+        mode={activeChatSecurity.mode}
+        onClose={() => setE2eeModalOpen(false)}
+        onConfirm={enableE2EEForActiveChat}
+      />
+
       <ToastViewport toasts={toasts} />
     </div>
   );
@@ -724,4 +947,59 @@ function upsertMessage(items, nextMessage) {
   return [...items, nextMessage].sort(
     (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
   );
+}
+
+function getChatSecurityState(chat, currentUser, e2eeError) {
+  if (!chat) {
+    return {
+      mode: "inactive",
+      canSend: false,
+      headerLabel: "E2EE",
+      composerPlaceholder: "Напишите сообщение",
+      disabledTitle: "",
+    };
+  }
+
+  if (e2eeError) {
+    return {
+      mode: chat.e2eeEnabled ? "device-error" : "inactive",
+      canSend: !chat.e2eeEnabled,
+      headerLabel: chat.e2eeEnabled
+        ? "E2EE недоступно на этом устройстве"
+        : "Включить E2EE",
+      composerPlaceholder: chat.e2eeEnabled
+        ? "Защищенная отправка временно недоступна"
+        : "Напишите сообщение",
+      disabledTitle: chat.e2eeEnabled ? e2eeError : "",
+    };
+  }
+
+  if (!chat.e2eeEnabled) {
+    return {
+      mode: "inactive",
+      canSend: true,
+      headerLabel: "Включить E2EE",
+      composerPlaceholder: "Напишите сообщение",
+      disabledTitle: "",
+    };
+  }
+
+  const hasOwnKey = hasLocalPrivateKey(currentUser?.id);
+  if (hasOwnKey && canEncryptForChat(chat)) {
+    return {
+      mode: "enabled",
+      canSend: true,
+      headerLabel: "E2EE включено",
+      composerPlaceholder: "Напишите защищенное сообщение",
+      disabledTitle: "",
+    };
+  }
+
+  return {
+    mode: "pending",
+    canSend: false,
+    headerLabel: "E2EE включено",
+    composerPlaceholder: "Ожидаем ключи участников",
+    disabledTitle: "",
+  };
 }

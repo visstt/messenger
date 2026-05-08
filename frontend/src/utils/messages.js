@@ -1,15 +1,20 @@
 export function renderPreview(message) {
   if (!message) return "Сообщений пока нет";
   if (message.deletedAt) return "Сообщение удалено";
+  if (message.kind === "system") return message.text || "Системное сообщение";
+  if (message.e2eeState === "locked") return "Зашифрованное сообщение";
   if (message.kind === "image") {
     const items = parseImageItems(message);
     if (message.text) return message.text;
     return items.length > 1 ? `Фото · ${items.length}` : "Фото";
   }
   if (message.kind === "video") return message.text || "Видео";
-  if (message.kind === "file") return message.text || message.fileName || "Файл";
+  if (message.kind === "file") {
+    const [item] = parseAttachmentItems(message);
+    return message.text || item?.name || "Файл";
+  }
   if (message.kind === "voice") return `Голосовое · ${message.durationSec || 0}с`;
-  return message.text;
+  return message.text || "Зашифрованное сообщение";
 }
 
 export function translateStatus(status) {
@@ -28,6 +33,14 @@ export function formatClock(value) {
 }
 
 export function parseImageItems(message) {
+  const attachments = message?.decryptedAttachments;
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    return attachments.map((item, index) => ({
+      src: item.src,
+      alt: item.name || `Фото ${index + 1}`,
+    }));
+  }
+
   const urls = parseMaybeArray(message.fileUrl);
   const names = parseMaybeArray(message.fileName);
   return urls.map((src, index) => ({
@@ -37,12 +50,24 @@ export function parseImageItems(message) {
 }
 
 export function parseAttachmentItems(message) {
+  const attachments = message?.decryptedAttachments;
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    return attachments.map((item) => ({
+      src: item.src,
+      name: item.name || "Файл",
+      extension: extensionFromName(item.name),
+    }));
+  }
+
   const urls = parseMaybeArray(message.fileUrl);
   const names = parseMaybeArray(message.fileName);
   return urls.map((src, index) => {
     const name = names[index] || src.split("/").pop() || "Файл";
-    const extension = name.includes(".") ? name.split(".").pop().toUpperCase() : "";
-    return { src, name, extension };
+    return {
+      src,
+      name,
+      extension: extensionFromName(name),
+    };
   });
 }
 
@@ -65,14 +90,10 @@ export function groupMessages(messages) {
 
     if (canMergeIntoPrevious(previous, message)) {
       previous.items.push(message);
-      previous.fileUrl = JSON.stringify([
-        ...parseMaybeArray(previous.fileUrl),
-        ...parseMaybeArray(message.fileUrl),
-      ]);
-      previous.fileName = JSON.stringify([
-        ...parseMaybeArray(previous.fileName),
-        ...parseMaybeArray(message.fileName),
-      ]);
+      previous.decryptedAttachments = [
+        ...(previous.decryptedAttachments || []),
+        ...message.decryptedAttachments,
+      ];
       previous.status = message.status;
       previous.createdAt = message.createdAt;
       previous.id = message.id;
@@ -97,7 +118,9 @@ export function groupMessages(messages) {
 function canMergeIntoPrevious(previous, next) {
   if (!previous) return false;
   if (previous.senderId !== next.senderId) return false;
+  if (previous.kind === "system" || next.kind === "system") return false;
   if (previous.kind !== "image" || next.kind !== "image") return false;
+  if (previous.e2eeState === "locked" || next.e2eeState === "locked") return false;
 
   if (previous.deletedAt && next.deletedAt) {
     const previousTimeDeleted = new Date(previous.createdAt).getTime();
@@ -112,4 +135,9 @@ function canMergeIntoPrevious(previous, next) {
   const previousTime = new Date(previous.createdAt).getTime();
   const nextTime = new Date(next.createdAt).getTime();
   return Math.abs(nextTime - previousTime) <= 5000;
+}
+
+function extensionFromName(name) {
+  if (!name || !name.includes(".")) return "";
+  return name.split(".").pop().toUpperCase();
 }

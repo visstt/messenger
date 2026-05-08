@@ -68,10 +68,12 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub) http.Handl
 		protected.Get("/api/auth/me", s.handleMe)
 		protected.Get("/api/users/search", s.handleUserSearch)
 		protected.Patch("/api/users/me", s.handleUpdateProfile)
+		protected.Put("/api/users/me/keys", s.handleUpdateKeys)
 		protected.Post("/api/users/me/avatar", s.handleUploadAvatar)
 		protected.Get("/api/chats", s.handleListChats)
 		protected.Post("/api/chats/private", s.handleCreatePrivateChat)
 		protected.Post("/api/chats/group", s.handleCreateGroupChat)
+		protected.Post("/api/chats/{chatID}/e2ee/enable", s.handleEnableChatE2EE)
 		protected.Get("/api/chats/{chatID}/messages", s.handleListMessages)
 		protected.Post("/api/chats/{chatID}/messages/text", s.handleSendTextMessage)
 		protected.Post("/api/chats/{chatID}/messages/image", s.handleSendImageMessage)
@@ -172,6 +174,26 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
 }
 
+func (s *Server) handleUpdateKeys(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		PublicKey string `json:"publicKey"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if strings.TrimSpace(input.PublicKey) == "" {
+		writeError(w, http.StatusBadRequest, "public key is required")
+		return
+	}
+	user, err := s.store.UpdatePublicKey(r.Context(), currentUserID(r.Context()), input.PublicKey)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to update public key")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
 func (s *Server) handleUploadAvatar(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid upload")
@@ -252,6 +274,25 @@ func (s *Server) handleCreateGroupChat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"chat": chat})
 }
 
+func (s *Server) handleEnableChatE2EE(w http.ResponseWriter, r *http.Request) {
+	chatID := parseInt64Param(chi.URLParam(r, "chatID"))
+	chat, msg, recipientIDs, changed, err := s.store.EnableChatE2EE(r.Context(), currentUserID(r.Context()), chatID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to enable E2EE")
+		return
+	}
+
+	if changed {
+		s.pushChatE2EEEvent(chat, recipientIDs, currentUserID(r.Context()))
+		s.pushMessageEvents(msg, recipientIDs, currentUserID(r.Context()))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"chat":    chat,
+		"changed": changed,
+	})
+}
+
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	chatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
 	if err != nil {
@@ -269,6 +310,8 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSendTextMessage(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Text             string `json:"text"`
+		EncryptedPayload string `json:"encryptedPayload"`
+		EncryptionMeta   string `json:"encryptionMeta"`
 		ReplyToMessageID *int64 `json:"replyToMessageId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -281,6 +324,8 @@ func (s *Server) handleSendTextMessage(w http.ResponseWriter, r *http.Request) {
 		SenderID:         currentUserID(r.Context()),
 		Kind:             "text",
 		Text:             strings.TrimSpace(input.Text),
+		EncryptedPayload: strings.TrimSpace(input.EncryptedPayload),
+		EncryptionMeta:   strings.TrimSpace(input.EncryptionMeta),
 		ReplyToMessageID: input.ReplyToMessageID,
 	})
 	if err != nil {
@@ -322,6 +367,8 @@ func (s *Server) handleFileMessage(w http.ResponseWriter, r *http.Request, kind 
 
 	duration, _ := strconv.Atoi(r.FormValue("durationSec"))
 	caption := strings.TrimSpace(r.FormValue("text"))
+	encryptedPayload := strings.TrimSpace(r.FormValue("encryptedPayload"))
+	encryptionMeta := strings.TrimSpace(r.FormValue("encryptionMeta"))
 	var replyTo *int64
 	if value := r.FormValue("replyToMessageId"); value != "" {
 		id, err := strconv.ParseInt(value, 10, 64)
@@ -382,6 +429,8 @@ func (s *Server) handleFileMessage(w http.ResponseWriter, r *http.Request, kind 
 		FileURL:          fileURL,
 		FileName:         fileName,
 		DurationSec:      duration,
+		EncryptedPayload: encryptedPayload,
+		EncryptionMeta:   encryptionMeta,
 		ReplyToMessageID: replyTo,
 	})
 	if err != nil {
@@ -439,13 +488,22 @@ func (s *Server) handleTyping(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleEditMessage(w http.ResponseWriter, r *http.Request) {
 	messageID := parseInt64Param(chi.URLParam(r, "messageID"))
 	var input struct {
-		Text string `json:"text"`
+		Text             string `json:"text"`
+		EncryptedPayload string `json:"encryptedPayload"`
+		EncryptionMeta   string `json:"encryptionMeta"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	msg, recipientIDs, err := s.store.EditMessage(r.Context(), currentUserID(r.Context()), messageID, input.Text)
+	msg, recipientIDs, err := s.store.EditMessage(
+		r.Context(),
+		currentUserID(r.Context()),
+		messageID,
+		input.Text,
+		input.EncryptedPayload,
+		input.EncryptionMeta,
+	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to edit message")
 		return
@@ -537,6 +595,20 @@ func (s *Server) pushChatCreatedEvent(chat store.ChatDetails, creatorID int64) {
 			s.hub.BroadcastToUser(participant.ID, event)
 		}
 	}
+}
+
+func (s *Server) pushChatE2EEEvent(chat store.ChatDetails, recipientIDs []int64, actorID int64) {
+	event := realtime.Event{
+		Type: "chat:e2ee",
+		Data: map[string]any{
+			"chatId": chat.ID,
+			"chat":   chat,
+		},
+	}
+	for _, recipientID := range recipientIDs {
+		s.hub.BroadcastToUser(recipientID, event)
+	}
+	s.hub.BroadcastToUser(actorID, event)
 }
 
 func currentUserID(ctx context.Context) int64 {

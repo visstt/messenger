@@ -30,6 +30,11 @@ export const api = {
   logout: () => request("/api/auth/logout", { method: "POST" }),
   updateProfile: (body) =>
     request("/api/users/me", { method: "PATCH", body: JSON.stringify(body) }),
+  updatePublicKey: (publicKey) =>
+    request("/api/users/me/keys", {
+      method: "PUT",
+      body: JSON.stringify({ publicKey }),
+    }),
   uploadAvatar: (formData) =>
     request("/api/users/me/avatar", { method: "POST", body: formData }),
   searchUsers: (query) =>
@@ -44,6 +49,10 @@ export const api = {
     request("/api/chats/group", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  enableChatE2EE: (chatId) =>
+    request(`/api/chats/${chatId}/e2ee/enable`, {
+      method: "POST",
     }),
   listMessages: (chatId) => request(`/api/chats/${chatId}/messages`),
   sendTextMessage: (chatId, body) =>
@@ -77,10 +86,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ typing }),
     }),
-  editMessage: (messageId, text) =>
+  editMessage: (messageId, body) =>
     request(`/api/messages/${messageId}`, {
       method: "PATCH",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(body),
     }),
   deleteMessage: (messageId) =>
     request(`/api/messages/${messageId}`, {

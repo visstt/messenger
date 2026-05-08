@@ -46,6 +46,14 @@ export default function MessageList({
       }}
     >
       {displayMessages.map((message) => {
+        if (message.kind === "system") {
+          return (
+            <div key={message.key} className="system-message-row" aria-label="Системное сообщение">
+              <div className="system-message-badge">{message.text}</div>
+            </div>
+          );
+        }
+
         const own = message.senderId === currentUser.id;
         return (
           <article key={message.key} className={`bubble-row ${own ? "own" : ""}`}>
@@ -55,6 +63,8 @@ export default function MessageList({
                 <p className="deleted-text">
                   {message.deletedGroup ? "Группа фото удалена" : "Сообщение удалено"}
                 </p>
+              ) : message.e2eeState === "locked" ? (
+                <p className="deleted-text">Не удалось расшифровать сообщение на этом устройстве.</p>
               ) : (
                 <>
                   {message.kind === "text" && <p>{message.text}</p>}
@@ -63,9 +73,7 @@ export default function MessageList({
                   )}
                   {message.kind === "video" && <VideoMessage message={message} />}
                   {message.kind === "file" && <FileMessage message={message} />}
-                  {message.kind === "voice" && (
-                    <VoiceMessage message={message} />
-                  )}
+                  {message.kind === "voice" && <VoiceMessage message={message} />}
                   {message.kind !== "text" && message.text && (
                     <p className="media-caption">{message.text}</p>
                   )}
@@ -77,7 +85,7 @@ export default function MessageList({
                 {message.grouped && <span>{`фото: ${message.items.length}`}</span>}
                 {own && <span>{translateStatus(message.status)}</span>}
               </footer>
-              {own && !message.deletedAt && (
+              {own && !message.deletedAt && message.e2eeState !== "locked" && (
                 <div className="bubble-actions">
                   {message.kind === "text" && (
                     <button
@@ -123,18 +131,19 @@ function VoiceMessage({ message }) {
     stopAudioPlayback,
     setPreloadedAudioBlob,
   } = controls;
+  const [item] = parseAttachmentItems(message);
 
   useEffect(() => {
-    if (!message.fileUrl || loadedUrlRef.current === message.fileUrl) return undefined;
+    if (!item?.src || loadedUrlRef.current === item.src) return undefined;
 
     let cancelled = false;
 
     async function loadVoice() {
       setLoaded(false);
-      const response = await fetch(message.fileUrl);
+      const response = await fetch(item.src);
       const blob = await response.blob();
       if (cancelled) return;
-      loadedUrlRef.current = message.fileUrl;
+      loadedUrlRef.current = item.src;
       setPreloadedAudioBlob(blob);
       setLoaded(true);
     }
@@ -143,7 +152,7 @@ function VoiceMessage({ message }) {
     return () => {
       cancelled = true;
     };
-  }, [message.fileUrl]);
+  }, [item?.src, setPreloadedAudioBlob]);
 
   const ready = loaded && isAvailableRecordedAudio && !isProcessingRecordedAudio;
   const playing = ready && !isPausedRecordedAudio && currentAudioTime > 0;
@@ -244,7 +253,7 @@ function FileMessage({ message }) {
   return (
     <div className="attachment-stack">
       {items.map((item) => (
-        <a className="file-message" key={item.src} href={item.src} download>
+        <a className="file-message" key={item.src} href={item.src} download={item.name}>
           <span className="file-message-icon">
             <FiFile />
           </span>
