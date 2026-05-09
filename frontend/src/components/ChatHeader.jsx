@@ -46,9 +46,6 @@ export default function ChatHeader({
             <FiLock />
             <span>{securityState?.headerLabel || "E2EE"}</span>
           </button>
-          <span className="status-pill">
-            {chat?.kind === "group" ? "групповой чат" : "личный диалог"}
-          </span>
           {loading && <span className="status-pill">обновление...</span>}
         </div>
       </div>

@@ -52,11 +52,6 @@ export default function ProfileEditorModal({
           value={draft.username}
           onChange={(event) => onChange((prev) => ({ ...prev, username: event.target.value }))}
         />
-        <input
-          placeholder="Ссылка на аватар"
-          value={draft.avatarUrl}
-          onChange={(event) => onChange((prev) => ({ ...prev, avatarUrl: event.target.value }))}
-        />
         <textarea
           rows="4"
           placeholder="О себе"

@@ -13,6 +13,7 @@ import ProfileModal from "./components/modals/ProfileModal";
 import GroupChatModal from "./components/modals/GroupChatModal";
 import SearchModal from "./components/modals/SearchModal";
 import E2EEModal from "./components/modals/E2EEModal";
+import ForwardMessageModal from "./components/modals/ForwardMessageModal";
 import ToastViewport from "./components/ToastViewport";
 import { api } from "./lib/api";
 import {
@@ -21,8 +22,8 @@ import {
   ensureDeviceKeys,
   encryptAttachmentMessage,
   encryptTextMessage,
-  hasLocalPrivateKey,
 } from "./lib/e2ee";
+import { parseAttachmentItems, parseImageItems, renderPreview } from "./utils/messages";
 
 const emptyProfile = { name: "", username: "", bio: "", avatarUrl: "" };
 
@@ -59,23 +60,31 @@ export default function App() {
   const [imageViewer, setImageViewer] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [editDialog, setEditDialog] = useState(null);
+  const [replyDraft, setReplyDraft] = useState(null);
+  const [forwardDraft, setForwardDraft] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [profileDraft, setProfileDraft] = useState(emptyProfile);
   const [loadingChatId, setLoadingChatId] = useState(null);
   const [e2eeError, setE2eeError] = useState("");
   const [e2eeModalOpen, setE2eeModalOpen] = useState(false);
+  const [hasDeviceKey, setHasDeviceKey] = useState(false);
   const socketRef = useRef(null);
   const activeChatIdRef = useRef(null);
+  const decryptedCacheRef = useRef(new Map());
 
   const activeTyping = activeChat ? typingState[activeChat.id] : false;
   const welcomeChat = useMemo(() => chats[0], [chats]);
   const activeChatSecurity = useMemo(
-    () => getChatSecurityState(activeChat, currentUser, e2eeError),
-    [activeChat, currentUser, e2eeError]
+    () => getChatSecurityState(activeChat, hasDeviceKey, e2eeError),
+    [activeChat, hasDeviceKey, e2eeError]
   );
 
   useEffect(() => {
     activeChatIdRef.current = activeChat?.id ?? null;
+  }, [activeChat?.id]);
+
+  useEffect(() => {
+    setReplyDraft(null);
   }, [activeChat?.id]);
 
   useEffect(() => {
@@ -196,7 +205,16 @@ export default function App() {
     const refresh = async () => {
       if (document.visibilityState === "hidden") return;
       try {
-        await fetchChats(activeChatIdRef.current, { syncActive: Boolean(activeChatIdRef.current) });
+        if (activeChatIdRef.current) {
+          await fetchChats(activeChatIdRef.current, { syncActive: true });
+          await openChat(activeChatIdRef.current, {
+            markRead: false,
+            forceScroll: false,
+            silent: true,
+          });
+        } else {
+          await fetchChats(activeChatIdRef.current, { syncActive: false });
+        }
       } catch {
         return null;
       }
@@ -306,17 +324,40 @@ export default function App() {
       const secureUser = await ensureDeviceKeys(user, api);
       applyUserSession(secureUser);
       setE2eeError("");
+      setHasDeviceKey(true);
       return secureUser;
     } catch (err) {
       applyUserSession(user);
       setE2eeError(err.message);
+      setHasDeviceKey(false);
       return user;
     }
   }
 
   async function hydrateMessage(message, options = {}) {
     if (!message || !currentUser || message.kind === "system") return message;
-    return decryptMessage(message, currentUser.id, options);
+    const cacheKey = getMessageCacheKey(message);
+    const fingerprint = getMessageFingerprint(message, options);
+    const cached = decryptedCacheRef.current.get(cacheKey);
+
+    if (cached && cached.fingerprint === fingerprint) {
+      return cached.value;
+    }
+
+    const decrypted = normalizeForwardedMessage(
+      await decryptMessage(message, currentUser.id, options)
+    );
+
+    if (decrypted.e2eeState === "ready") {
+      storeCachedMessage(decryptedCacheRef.current, cacheKey, fingerprint, decrypted);
+      return decrypted;
+    }
+
+    if (cached && cached.fingerprint === fingerprint) {
+      return cached.value;
+    }
+
+    return decrypted;
   }
 
   async function fetchChats(preferredChatId, options = {}) {
@@ -345,11 +386,13 @@ export default function App() {
   }
 
   async function openChat(chatId, options = {}) {
-    const { markRead = true, forceScroll = false } = options;
+    const { markRead = true, forceScroll = false, silent = false } = options;
     if (!chatId) return;
 
     activeChatIdRef.current = Number(chatId);
-    setLoadingChatId(chatId);
+    if (!silent) {
+      setLoadingChatId(chatId);
+    }
 
     try {
       const data = await api.listMessages(chatId);
@@ -376,7 +419,9 @@ export default function App() {
         );
       }
     } finally {
-      setLoadingChatId(null);
+      if (!silent) {
+        setLoadingChatId(null);
+      }
     }
   }
 
@@ -412,6 +457,7 @@ export default function App() {
   }
 
   async function handleLogout() {
+    disposeCachedMessages(decryptedCacheRef.current);
     await api.logout();
     setCurrentUser(null);
     setChats([]);
@@ -428,6 +474,7 @@ export default function App() {
     setSidebarTab("chats");
     setE2eeError("");
     setE2eeModalOpen(false);
+    setHasDeviceKey(false);
   }
 
   async function enableE2EEForActiveChat() {
@@ -501,23 +548,26 @@ export default function App() {
     }
   }
 
-  async function sendText(text, replyToMessageId) {
-    if (!activeChat || !text.trim()) return;
-    if (activeChatSecurity.mode !== "enabled") {
-      await api.sendTextMessage(activeChat.id, { text: text.trim(), replyToMessageId });
-      await refreshActiveChat({ forceScroll: true });
+  async function sendTextToChat(chat, text, replyToMessageId) {
+    if (!chat || !text.trim()) return;
+    const securityState = getChatSecurityState(chat, hasDeviceKey, e2eeError);
+    if (securityState.mode === "inactive") {
+      await api.sendTextMessage(chat.id, { text: text.trim(), replyToMessageId });
       return;
     }
+    if (securityState.mode !== "enabled") {
+      throw new Error(securityState.disabledTitle || "E2EE is not ready for this chat yet.");
+    }
 
-    const encrypted = await encryptTextMessage({ text: text.trim(), chat: activeChat });
-    await api.sendTextMessage(activeChat.id, { ...encrypted, replyToMessageId });
-    await refreshActiveChat({ forceScroll: true });
+    const encrypted = await encryptTextMessage({ text: text.trim(), chat });
+    await api.sendTextMessage(chat.id, { ...encrypted, replyToMessageId });
   }
 
-  async function sendAttachment(files, caption = "", replyToMessageId) {
-    if (!activeChat || !files?.length) return;
+  async function sendAttachmentToChat(chat, files, caption = "", replyToMessageId) {
+    if (!chat || !files?.length) return;
     const trimmedCaption = caption.trim();
     let captionUsed = false;
+    const securityState = getChatSecurityState(chat, hasDeviceKey, e2eeError);
 
     const images = files.filter((file) => file.type.startsWith("image/"));
     const videos = files.filter((file) => file.type.startsWith("video/"));
@@ -525,7 +575,7 @@ export default function App() {
       (file) => !file.type.startsWith("image/") && !file.type.startsWith("video/")
     );
 
-    if (activeChatSecurity.mode !== "enabled") {
+    if (securityState.mode === "inactive") {
       if (images.length > 0) {
         const formData = new FormData();
         images.forEach((file) => formData.append("file", file));
@@ -534,7 +584,7 @@ export default function App() {
           captionUsed = true;
         }
         if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
-        await api.sendImageMessage(activeChat.id, formData);
+        await api.sendImageMessage(chat.id, formData);
       }
 
       for (const file of videos) {
@@ -545,7 +595,7 @@ export default function App() {
           captionUsed = true;
         }
         if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
-        await api.sendVideoMessage(activeChat.id, formData);
+        await api.sendVideoMessage(chat.id, formData);
       }
 
       for (const file of otherFiles) {
@@ -556,16 +606,17 @@ export default function App() {
           captionUsed = true;
         }
         if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
-        await api.sendFileMessage(activeChat.id, formData);
+        await api.sendFileMessage(chat.id, formData);
       }
-
-      await refreshActiveChat({ forceScroll: true });
       return;
+    }
+    if (securityState.mode !== "enabled") {
+      throw new Error(securityState.disabledTitle || "E2EE is not ready for this chat yet.");
     }
 
     if (images.length > 0) {
       const encrypted = await encryptAttachmentMessage({
-        chat: activeChat,
+        chat,
         caption: trimmedCaption,
         files: images,
       });
@@ -575,12 +626,12 @@ export default function App() {
       formData.append("encryptionMeta", encrypted.encryptionMeta);
       captionUsed = trimmedCaption.length > 0;
       if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
-      await api.sendImageMessage(activeChat.id, formData);
+      await api.sendImageMessage(chat.id, formData);
     }
 
     for (const file of videos) {
       const encrypted = await encryptAttachmentMessage({
-        chat: activeChat,
+        chat,
         caption: trimmedCaption && !captionUsed ? trimmedCaption : "",
         files: [file],
       });
@@ -590,12 +641,12 @@ export default function App() {
       formData.append("encryptionMeta", encrypted.encryptionMeta);
       if (trimmedCaption && !captionUsed) captionUsed = true;
       if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
-      await api.sendVideoMessage(activeChat.id, formData);
+      await api.sendVideoMessage(chat.id, formData);
     }
 
     for (const file of otherFiles) {
       const encrypted = await encryptAttachmentMessage({
-        chat: activeChat,
+        chat,
         caption: trimmedCaption && !captionUsed ? trimmedCaption : "",
         files: [file],
       });
@@ -605,29 +656,33 @@ export default function App() {
       formData.append("encryptionMeta", encrypted.encryptionMeta);
       if (trimmedCaption && !captionUsed) captionUsed = true;
       if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
-      await api.sendFileMessage(activeChat.id, formData);
+      await api.sendFileMessage(chat.id, formData);
     }
-
-    await refreshActiveChat({ forceScroll: true });
   }
 
-  async function sendVoice(blob, durationSec, replyToMessageId) {
-    if (!activeChat || !blob) return;
-    if (activeChatSecurity.mode !== "enabled") {
+  async function sendVoiceToChat(chat, blob, durationSec, replyToMessageId, caption = "") {
+    if (!chat || !blob) return;
+    const trimmedCaption = caption.trim();
+    const securityState = getChatSecurityState(chat, hasDeviceKey, e2eeError);
+    if (securityState.mode === "inactive") {
       const formData = new FormData();
       formData.append("file", blob, `voice-${Date.now()}.webm`);
       formData.append("durationSec", String(durationSec || 0));
+      if (trimmedCaption) formData.append("text", trimmedCaption);
       if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
-      await api.sendVoiceMessage(activeChat.id, formData);
-      await refreshActiveChat({ forceScroll: true });
+      await api.sendVoiceMessage(chat.id, formData);
       return;
+    }
+    if (securityState.mode !== "enabled") {
+      throw new Error(securityState.disabledTitle || "E2EE is not ready for this chat yet.");
     }
 
     const voiceFile = new File([blob], `voice-${Date.now()}.webm`, {
       type: blob.type || "audio/webm",
     });
     const encrypted = await encryptAttachmentMessage({
-      chat: activeChat,
+      chat,
+      caption: trimmedCaption,
       files: [voiceFile],
       durationSec: Number(durationSec || 0),
     });
@@ -636,7 +691,63 @@ export default function App() {
     formData.append("encryptedPayload", encrypted.encryptedPayload);
     formData.append("encryptionMeta", encrypted.encryptionMeta);
     if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
-    await api.sendVoiceMessage(activeChat.id, formData);
+    await api.sendVoiceMessage(chat.id, formData);
+  }
+
+  async function sendVideoNoteToChat(chat, file, replyToMessageId, caption = "") {
+    if (!chat || !file) return;
+    const trimmedCaption = caption.trim();
+    const securityState = getChatSecurityState(chat, hasDeviceKey, e2eeError);
+    if (securityState.mode === "inactive") {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (trimmedCaption) formData.append("text", trimmedCaption);
+      if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
+      await api.sendVideoNoteMessage(chat.id, formData);
+      return;
+    }
+    if (securityState.mode !== "enabled") {
+      throw new Error(securityState.disabledTitle || "E2EE is not ready for this chat yet.");
+    }
+
+    const encrypted = await encryptAttachmentMessage({
+      chat,
+      caption: trimmedCaption,
+      files: [file],
+    });
+    const formData = new FormData();
+    formData.append("file", encrypted.encryptedFiles[0]);
+    formData.append("encryptedPayload", encrypted.encryptedPayload);
+    formData.append("encryptionMeta", encrypted.encryptionMeta);
+    if (replyToMessageId) formData.append("replyToMessageId", replyToMessageId);
+    await api.sendVideoNoteMessage(chat.id, formData);
+  }
+
+  async function sendText(text, replyToMessageId) {
+    if (!activeChat || !text.trim()) return;
+    await sendTextToChat(activeChat, text, replyToMessageId);
+    setReplyDraft(null);
+    await refreshActiveChat({ forceScroll: true });
+  }
+
+  async function sendAttachment(files, caption = "", replyToMessageId) {
+    if (!activeChat || !files?.length) return;
+    await sendAttachmentToChat(activeChat, files, caption, replyToMessageId);
+    setReplyDraft(null);
+    await refreshActiveChat({ forceScroll: true });
+  }
+
+  async function sendVoice(blob, durationSec, replyToMessageId) {
+    if (!activeChat || !blob) return;
+    await sendVoiceToChat(activeChat, blob, durationSec, replyToMessageId);
+    setReplyDraft(null);
+    await refreshActiveChat({ forceScroll: true });
+  }
+
+  async function sendVideoNote(file, replyToMessageId) {
+    if (!activeChat || !file) return;
+    await sendVideoNoteToChat(activeChat, file, replyToMessageId);
+    setReplyDraft(null);
     await refreshActiveChat({ forceScroll: true });
   }
 
@@ -644,6 +755,54 @@ export default function App() {
     if (!activeChat) return;
     await fetchChats(activeChat.id);
     await openChat(activeChat.id, { markRead: false, forceScroll: false, ...options });
+  }
+
+  async function forwardMessageToChat(message, targetChatId) {
+    const targetChat = chats.find((chat) => Number(chat.id) === Number(targetChatId));
+    if (!targetChat || !message) return;
+    const forwardedText = buildForwardedText(message);
+    try {
+      if (message.kind === "text") {
+        await sendTextToChat(targetChat, forwardedText);
+      }
+
+      if (message.kind === "image") {
+        const files = await buildFilesFromImageMessage(message);
+        await sendAttachmentToChat(targetChat, files, forwardedText);
+      }
+
+      if (message.kind === "video" || message.kind === "file") {
+        const files = await buildFilesFromAttachmentMessage(message);
+        await sendAttachmentToChat(targetChat, files, forwardedText);
+      }
+
+      if (message.kind === "video_note") {
+        const [item] = parseAttachmentItems(message);
+        if (item?.src) {
+          const blob = await fetchBlob(item.src);
+          const file = new File([blob], item.name || `video-note-${Date.now()}.mp4`, {
+            type: blob.type || guessFileMimeType(item.name),
+          });
+          await sendVideoNoteToChat(targetChat, file, undefined, forwardedText);
+        }
+      }
+
+      if (message.kind === "voice") {
+        const [item] = parseAttachmentItems(message);
+        if (item?.src) {
+          const blob = await fetchBlob(item.src);
+          await sendVoiceToChat(targetChat, blob, message.durationSec || 0, undefined, forwardedText);
+        }
+      }
+
+      setForwardDraft(null);
+      pushToast("Сообщение переслано");
+
+      await fetchChats(targetChat.id);
+      await openChat(targetChat.id, { markRead: true, forceScroll: true });
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
   async function editMessage(message) {
@@ -661,6 +820,19 @@ export default function App() {
         ? "Все изображения в этой группе будут удалены."
         : "Сообщение исчезнет из диалога.",
     });
+  }
+
+  async function togglePinMessage(message) {
+    if (!message || message.deletedAt) return;
+
+    if (message.pinnedAt) {
+      await api.unpinMessage(message.id);
+      pushToast("Сообщение откреплено");
+    } else {
+      await api.pinMessage(message.id);
+      pushToast("Сообщение закреплено");
+    }
+    await refreshActiveChat();
   }
 
   async function confirmDeleteMessage() {
@@ -805,6 +977,9 @@ export default function App() {
               messages={messages}
               onEdit={editMessage}
               onDelete={deleteMessage}
+              onReply={(message) => setReplyDraft(message)}
+              onForward={(message) => setForwardDraft(message)}
+              onTogglePin={togglePinMessage}
               onOpenImage={openImageViewer}
               forceScroll={Boolean(activeChat.forceScroll)}
             />
@@ -814,9 +989,13 @@ export default function App() {
               isDisabled={!activeChatSecurity.canSend}
               inputPlaceholder={activeChatSecurity.composerPlaceholder}
               disabledTitle={activeChatSecurity.disabledTitle}
+              replyMessage={replyDraft}
+              replyPreview={replyDraft ? renderPreview(replyDraft) : ""}
+              onCancelReply={() => setReplyDraft(null)}
               onSendText={sendText}
               onSendAttachment={sendAttachment}
               onSendVoice={sendVoice}
+              onSendVideoNote={sendVideoNote}
               onTyping={async (typing) => {
                 try {
                   await api.sendTyping(activeChat.id, typing);
@@ -831,10 +1010,6 @@ export default function App() {
           <div className="empty-stage">
             <p className="eyebrow">Рабочее пространство готово</p>
             <h2>{welcomeChat ? "Выберите чат слева" : "Начните с нового чата"}</h2>
-            <p>
-              В этой версии есть авторизация, поиск пользователей, личные чаты,
-              текстовые, фото и голосовые сообщения, а также редактирование и удаление.
-            </p>
           </div>
         )}
       </main>
@@ -846,6 +1021,14 @@ export default function App() {
         onClose={() => setSearchOpen(false)}
         onQueryChange={setSearchQuery}
         onStartChat={startChat}
+      />
+
+      <ForwardMessageModal
+        open={Boolean(forwardDraft)}
+        chats={chats}
+        activeChatId={activeChat?.id}
+        onClose={() => setForwardDraft(null)}
+        onForward={(targetChatId) => forwardMessageToChat(forwardDraft, targetChatId)}
       />
 
       <GroupChatModal
@@ -886,7 +1069,9 @@ export default function App() {
       <PeerProfileModal
         open={peerProfileOpen}
         chat={activeChat}
+        messages={messages}
         onClose={() => setPeerProfileOpen(false)}
+        onOpenImage={(items, index) => setImageViewer({ items, index })}
       />
 
       <ImageViewerModal
@@ -949,7 +1134,58 @@ function upsertMessage(items, nextMessage) {
   );
 }
 
-function getChatSecurityState(chat, currentUser, e2eeError) {
+async function buildFilesFromImageMessage(message) {
+  const files = [];
+  const imageItems = parseImageItems(message);
+
+  for (let index = 0; index < imageItems.length; index += 1) {
+    const item = imageItems[index];
+    const blob = await fetchBlob(item.src);
+    files.push(
+      new File([blob], item.alt || `image-${index + 1}.jpg`, {
+        type: blob.type || "image/jpeg",
+      })
+    );
+  }
+
+  return files;
+}
+
+async function buildFilesFromAttachmentMessage(message) {
+  const files = [];
+  const items = parseAttachmentItems(message);
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const blob = await fetchBlob(item.src);
+    files.push(
+      new File([blob], item.name || `file-${index + 1}`, {
+        type: blob.type || guessFileMimeType(item.name),
+      })
+    );
+  }
+
+  return files;
+}
+
+async function fetchBlob(src) {
+  const response = await fetch(src, { credentials: "include" });
+  return response.blob();
+}
+
+function guessFileMimeType(name = "") {
+  const lower = name.toLowerCase();
+
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".webm")) return "video/webm";
+  if (lower.endsWith(".mov")) return "video/quicktime";
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".txt")) return "text/plain";
+  if (lower.endsWith(".zip")) return "application/zip";
+  return "application/octet-stream";
+}
+
+function getChatSecurityState(chat, hasDeviceKey, e2eeError) {
   if (!chat) {
     return {
       mode: "inactive",
@@ -984,8 +1220,7 @@ function getChatSecurityState(chat, currentUser, e2eeError) {
     };
   }
 
-  const hasOwnKey = hasLocalPrivateKey(currentUser?.id);
-  if (hasOwnKey && canEncryptForChat(chat)) {
+  if (hasDeviceKey && canEncryptForChat(chat)) {
     return {
       mode: "enabled",
       canSend: true,
@@ -1001,5 +1236,67 @@ function getChatSecurityState(chat, currentUser, e2eeError) {
     headerLabel: "E2EE включено",
     composerPlaceholder: "Ожидаем ключи участников",
     disabledTitle: "",
+  };
+}
+
+function getMessageCacheKey(message) {
+  return `${message.chatId}:${message.id}`;
+}
+
+function getMessageFingerprint(message, options = {}) {
+  return JSON.stringify({
+    encryptedPayload: message.encryptedPayload || "",
+    encryptionMeta: message.encryptionMeta || "",
+    text: message.text || "",
+    fileUrl: message.fileUrl || "",
+    fileName: message.fileName || "",
+    durationSec: message.durationSec || 0,
+    deletedAt: message.deletedAt || "",
+    includeFiles: Boolean(options.includeFiles),
+  });
+}
+
+function storeCachedMessage(cache, key, fingerprint, value) {
+  const previous = cache.get(key);
+  if (previous && previous.fingerprint !== fingerprint) {
+    revokeMessageObjectUrls(previous.value);
+  }
+  cache.set(key, { fingerprint, value });
+}
+
+function disposeCachedMessages(cache) {
+  cache.forEach((entry) => revokeMessageObjectUrls(entry.value));
+  cache.clear();
+}
+
+function revokeMessageObjectUrls(message) {
+  if (!Array.isArray(message?.decryptedAttachments)) return;
+  message.decryptedAttachments.forEach((item) => {
+    if (item?.src?.startsWith?.("blob:")) {
+      URL.revokeObjectURL(item.src);
+    }
+  });
+}
+
+const FORWARDED_PREFIX = "[[forwarded:";
+
+function buildForwardedText(message) {
+  const fromName = message.forwardedFromName || message.sender?.name || "Unknown";
+  const safeFromName = String(fromName).replaceAll("]]", "").trim();
+  const body = typeof message.text === "string" ? message.text.trim() : "";
+  return `${FORWARDED_PREFIX}${safeFromName}]]${body ? `\n${body}` : ""}`;
+}
+
+function normalizeForwardedMessage(message) {
+  if (!message || typeof message.text !== "string") return message;
+
+  const match = message.text.match(/^\[\[forwarded:(.+?)\]\](?:\r?\n)?([\s\S]*)$/);
+  if (!match) return message;
+
+  const [, forwardedFromName, body] = match;
+  return {
+    ...message,
+    forwardedFromName: forwardedFromName.trim(),
+    text: body || "",
   };
 }

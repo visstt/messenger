@@ -1,14 +1,17 @@
 const E2EE_STORAGE_PREFIX = "messenger-e2ee-keypair-v1:";
+const E2EE_DB_NAME = "messenger-e2ee";
+const E2EE_DB_VERSION = 1;
+const E2EE_STORE_NAME = "device_keys";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 export async function ensureDeviceKeys(user, api) {
-  const storedPair = loadStoredKeyPair(user.id);
+  const storedPair = await loadStoredKeyPair(user.id);
 
   if (!storedPair) {
     if (user.publicKey) {
       throw new Error(
-        "Для этого аккаунта уже включено сквозное шифрование, но локальный ключ на этом устройстве не найден."
+        "For this account, E2EE is already enabled, but the local device key was not found."
       );
     }
 
@@ -19,7 +22,7 @@ export async function ensureDeviceKeys(user, api) {
 
   if (user.publicKey && user.publicKey !== storedPair.publicKey) {
     throw new Error(
-      "Локальный ключ устройства не совпадает с ключом аккаунта. Для безопасности отправка зашифрованных сообщений отключена."
+      "The local device key does not match the account key. Encrypted sending is disabled for safety."
     );
   }
 
@@ -31,8 +34,8 @@ export async function ensureDeviceKeys(user, api) {
   return user;
 }
 
-export function hasLocalPrivateKey(userId) {
-  return Boolean(loadStoredKeyPair(userId));
+export async function hasLocalPrivateKey(userId) {
+  return Boolean(await loadStoredKeyPair(userId));
 }
 
 export function canEncryptForChat(chat) {
@@ -185,13 +188,13 @@ export async function decryptMessage(message, currentUserId, options = {}) {
 
 async function encryptPayloadForChat(chat, payload) {
   if (!chat?.participants?.length) {
-    throw new Error("Не удалось определить участников чата для шифрования.");
+    throw new Error("Could not determine chat participants for encryption.");
   }
 
   const participantKeys = await Promise.all(
     chat.participants.map(async (participant) => {
       if (!participant.publicKey) {
-        throw new Error(`У пользователя ${participant.name} ещё не настроен ключ E2EE.`);
+        throw new Error(`User ${participant.name} does not have an E2EE key yet.`);
       }
 
       return {
@@ -251,27 +254,125 @@ async function generateAndStoreKeyPair(userId) {
 
   const publicJwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
   const privateJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+  const hardenedPrivateKey = await crypto.subtle.importKey(
+    "jwk",
+    privateJwk,
+    {
+      name: "RSA-OAEP",
+      hash: "SHA-256",
+    },
+    false,
+    ["decrypt"]
+  );
+
   const stored = {
+    userId,
     publicKey: JSON.stringify(publicJwk),
-    privateKey: JSON.stringify(privateJwk),
+    privateKey: hardenedPrivateKey,
   };
-  window.localStorage.setItem(getStorageKey(userId), JSON.stringify(stored));
+  await saveStoredKeyPair(stored);
   return stored;
 }
 
 async function getDeviceKeys(userId) {
-  const stored = loadStoredKeyPair(userId);
+  const stored = await loadStoredKeyPair(userId);
   if (!stored) {
-    throw new Error("Локальный приватный ключ не найден.");
+    throw new Error("Local private key not found.");
   }
 
   return {
     publicKey: await importPublicKey(stored.publicKey),
-    privateKey: await importPrivateKey(stored.privateKey),
+    privateKey: stored.privateKey instanceof CryptoKey
+      ? stored.privateKey
+      : await importPrivateKey(stored.privateKey),
   };
 }
 
-function loadStoredKeyPair(userId) {
+async function loadStoredKeyPair(userId) {
+  if (typeof window === "undefined" || typeof indexedDB === "undefined") {
+    return null;
+  }
+
+  const record = await getStoredKeyPair(userId);
+  if (record) {
+    return record;
+  }
+
+  const legacyRecord = loadLegacyStoredKeyPair(userId);
+  if (!legacyRecord) {
+    return null;
+  }
+
+  const migrated = {
+    userId,
+    publicKey: legacyRecord.publicKey,
+    privateKey: await importPrivateKey(legacyRecord.privateKey),
+  };
+  await saveStoredKeyPair(migrated);
+  window.localStorage.removeItem(getStorageKey(userId));
+  return migrated;
+}
+
+async function getStoredKeyPair(userId) {
+  const db = await openKeyDatabase();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(E2EE_STORE_NAME, "readonly");
+    const store = tx.objectStore(E2EE_STORE_NAME);
+    const request = store.get(String(userId));
+
+    request.onsuccess = () => {
+      const result = request.result;
+      if (!result) {
+        resolve(null);
+        return;
+      }
+
+      resolve({
+        userId,
+        publicKey: result.publicKey,
+        privateKey: result.privateKey,
+      });
+    };
+    request.onerror = () => reject(request.error || new Error("Failed to read device key."));
+  });
+}
+
+async function saveStoredKeyPair({ userId, publicKey, privateKey }) {
+  const db = await openKeyDatabase();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(E2EE_STORE_NAME, "readwrite");
+    const store = tx.objectStore(E2EE_STORE_NAME);
+    store.put({
+      userId: String(userId),
+      publicKey,
+      privateKey,
+    });
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("Failed to store device key."));
+    tx.onabort = () => reject(tx.error || new Error("Storing device key was aborted."));
+  });
+}
+
+async function openKeyDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(E2EE_DB_NAME, E2EE_DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(E2EE_STORE_NAME)) {
+        db.createObjectStore(E2EE_STORE_NAME, { keyPath: "userId" });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Failed to open E2EE storage."));
+  });
+}
+
+function loadLegacyStoredKeyPair(userId) {
   if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem(getStorageKey(userId));
   if (!raw) return null;
@@ -304,7 +405,7 @@ async function importPrivateKey(serialized) {
       name: "RSA-OAEP",
       hash: "SHA-256",
     },
-    true,
+    false,
     ["decrypt"]
   );
 }

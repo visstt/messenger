@@ -51,6 +51,7 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub) http.Handl
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
 	}))
+	r.Use(s.securityHeadersMiddleware)
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -78,10 +79,13 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub) http.Handl
 		protected.Post("/api/chats/{chatID}/messages/text", s.handleSendTextMessage)
 		protected.Post("/api/chats/{chatID}/messages/image", s.handleSendImageMessage)
 		protected.Post("/api/chats/{chatID}/messages/video", s.handleSendVideoMessage)
+		protected.Post("/api/chats/{chatID}/messages/video-note", s.handleSendVideoNoteMessage)
 		protected.Post("/api/chats/{chatID}/messages/file", s.handleSendGenericFileMessage)
 		protected.Post("/api/chats/{chatID}/messages/voice", s.handleSendVoiceMessage)
 		protected.Post("/api/chats/{chatID}/read", s.handleMarkRead)
 		protected.Post("/api/chats/{chatID}/typing", s.handleTyping)
+		protected.Post("/api/messages/{messageID}/pin", s.handlePinMessage)
+		protected.Delete("/api/messages/{messageID}/pin", s.handleUnpinMessage)
 		protected.Patch("/api/messages/{messageID}", s.handleEditMessage)
 		protected.Delete("/api/messages/{messageID}", s.handleDeleteMessage)
 		protected.Get("/ws", s.handleWebSocket)
@@ -345,6 +349,10 @@ func (s *Server) handleSendVideoMessage(w http.ResponseWriter, r *http.Request) 
 	s.handleFileMessage(w, r, "video")
 }
 
+func (s *Server) handleSendVideoNoteMessage(w http.ResponseWriter, r *http.Request) {
+	s.handleFileMessage(w, r, "video_note")
+}
+
 func (s *Server) handleSendGenericFileMessage(w http.ResponseWriter, r *http.Request) {
 	s.handleFileMessage(w, r, "file")
 }
@@ -523,6 +531,28 @@ func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"message": msg})
 }
 
+func (s *Server) handlePinMessage(w http.ResponseWriter, r *http.Request) {
+	messageID := parseInt64Param(chi.URLParam(r, "messageID"))
+	msg, recipientIDs, err := s.store.PinMessage(r.Context(), currentUserID(r.Context()), messageID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to pin message")
+		return
+	}
+	s.pushMessageEvents(msg, recipientIDs, currentUserID(r.Context()))
+	writeJSON(w, http.StatusOK, map[string]any{"message": msg})
+}
+
+func (s *Server) handleUnpinMessage(w http.ResponseWriter, r *http.Request) {
+	messageID := parseInt64Param(chi.URLParam(r, "messageID"))
+	msg, recipientIDs, err := s.store.UnpinMessage(r.Context(), currentUserID(r.Context()), messageID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to unpin message")
+		return
+	}
+	s.pushMessageEvents(msg, recipientIDs, currentUserID(r.Context()))
+	writeJSON(w, http.StatusOK, map[string]any{"message": msg})
+}
+
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	userID := currentUserID(r.Context())
 	conn, err := s.upgrader.Upgrade(w, r, nil)
@@ -553,6 +583,17 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userIDKey, userID)))
+	})
+}
+
+func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(self), microphone=(self), geolocation=()")
+		next.ServeHTTP(w, r)
 	})
 }
 

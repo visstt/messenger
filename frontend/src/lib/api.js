@@ -70,6 +70,11 @@ export const api = {
       method: "POST",
       body: formData,
     }),
+  sendVideoNoteMessage: (chatId, formData) =>
+    request(`/api/chats/${chatId}/messages/video-note`, {
+      method: "POST",
+      body: formData,
+    }),
   sendFileMessage: (chatId, formData) =>
     request(`/api/chats/${chatId}/messages/file`, {
       method: "POST",
@@ -93,6 +98,14 @@ export const api = {
     }),
   deleteMessage: (messageId) =>
     request(`/api/messages/${messageId}`, {
+      method: "DELETE",
+    }),
+  pinMessage: (messageId) =>
+    request(`/api/messages/${messageId}/pin`, {
+      method: "POST",
+    }),
+  unpinMessage: (messageId) =>
+    request(`/api/messages/${messageId}/pin`, {
       method: "DELETE",
     }),
 };

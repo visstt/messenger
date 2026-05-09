@@ -4,12 +4,7 @@ export default function AuthScreen({ authMode, error, onModeChange, onSubmit }) 
       <div className="auth-ambient auth-ambient-left" />
       <div className="auth-ambient auth-ambient-right" />
       <div className="auth-card">
-        <p className="eyebrow">React + Go + Postgres MVP</p>
-        <h1>Чат MVP</h1>
-        <p className="auth-copy">
-          Личные диалоги, обновления в реальном времени, поиск пользователей,
-          медиа-сообщения и компактный интерфейс мессенджера.
-        </p>
+        <h1>Чат</h1>
         <div className="auth-switcher">
           <button
             type="button"
@@ -43,11 +38,6 @@ export default function AuthScreen({ authMode, error, onModeChange, onSubmit }) 
           </button>
         </form>
         {error && <p className="error-text">{error}</p>}
-        <div className="demo-box">
-          <strong>Демо-аккаунты</strong>
-          <span>`alice / alice12345`</span>
-          <span>`bob / bob12345`</span>
-        </div>
       </div>
     </div>
   );

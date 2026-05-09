@@ -9,6 +9,7 @@ export function renderPreview(message) {
     return items.length > 1 ? `Фото · ${items.length}` : "Фото";
   }
   if (message.kind === "video") return message.text || "Видео";
+  if (message.kind === "video_note") return "Видеосообщение";
   if (message.kind === "file") {
     const [item] = parseAttachmentItems(message);
     return message.text || item?.name || "Файл";
@@ -56,6 +57,7 @@ export function parseAttachmentItems(message) {
       src: item.src,
       name: item.name || "Файл",
       extension: extensionFromName(item.name),
+      mimeType: item.mimeType || guessMimeTypeFromName(item.name),
     }));
   }
 
@@ -67,6 +69,7 @@ export function parseAttachmentItems(message) {
       src,
       name,
       extension: extensionFromName(name),
+      mimeType: guessMimeTypeFromName(name),
     };
   });
 }
@@ -140,4 +143,19 @@ function canMergeIntoPrevious(previous, next) {
 function extensionFromName(name) {
   if (!name || !name.includes(".")) return "";
   return name.split(".").pop().toUpperCase();
+}
+
+function guessMimeTypeFromName(name = "") {
+  const lower = name.toLowerCase();
+
+  if (lower.endsWith(".webm")) return "video/webm";
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".mov")) return "video/quicktime";
+  if (lower.endsWith(".m4v")) return "video/x-m4v";
+  if (lower.endsWith(".ogv")) return "video/ogg";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".wav")) return "audio/wav";
+  if (lower.endsWith(".ogg")) return "audio/ogg";
+  if (lower.endsWith(".m4a")) return "audio/mp4";
+  return "application/octet-stream";
 }
