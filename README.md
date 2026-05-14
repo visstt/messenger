@@ -30,8 +30,8 @@ docker compose up --build
 
 После запуска будут доступны:
 
-- приложение: `http://localhost:3000`;
-- healthcheck backend: `http://localhost:8080/healthz`.
+- приложение: `http://localhost:3020`;
+- healthcheck backend: `http://localhost:9080/healthz`.
 
 ## Демо-аккаунты
 

@@ -28,7 +28,7 @@ services:
       PORT: 8080
       DATABASE_URL: postgres://messenger:messenger@postgres:5432/messenger?sslmode=disable
       JWT_SECRET: messenger-dev-secret
-      APP_ORIGIN: http://localhost:3000
+      APP_ORIGIN: http://localhost:3020
       UPLOAD_DIR: /app/uploads
       S3_ENDPOINT: https://s3.ru1.storage.beget.cloud
       S3_BUCKET_NAME: c15b4d655f70-medvito-data
@@ -47,7 +47,7 @@ services:
     volumes:
       - uploads-data:/app/uploads
     ports:
-      - "8080:8080"
+      - "9080:8080"
 
   frontend:
     build:
@@ -55,7 +55,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "3000:80"
+      - "3020:80"
 
 volumes:
   postgres-data:
