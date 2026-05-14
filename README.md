@@ -39,6 +39,8 @@ docker compose up --build
 
 На сервере обычно делают **nginx на хосте** с TLS (Let’s Encrypt / **certbot**) и проксируют на контейнер (`3020` для фронта). Для **звонков LiveKit** с HTTPS-страницы нужен **`wss://`** (часто отдельный поддомен с тем же или SAN-сертификатом). Пример конфига и шаги: [`deploy/host-nginx-messenger.example.conf`](./deploy/host-nginx-messenger.example.conf).
 
+В `location /` у этого nginx **обязательно** нужны заголовки WebSocket: `Upgrade`, `Connection` (см. пример в репозитории). Без них браузер не поднимет `wss://…/ws`, событие входящего звонка не придёт, а обычные HTTP-запросы (`/api/…`) могут работать.
+
 Переменные для продакшена (скопируйте [`.env.example`](./.env.example) в `.env` и подставьте домены):
 
 - `APP_ORIGIN` — точный URL приложения в браузере, например `https://chat.example.com`;
