@@ -1,3 +1,6 @@
+# Local env (production URLs, secrets)
+.env
+
 # Dependencies
 node_modules/
 frontend/node_modules/

@@ -28,7 +28,7 @@ services:
       PORT: 8080
       DATABASE_URL: postgres://messenger:messenger@postgres:5432/messenger?sslmode=disable
       JWT_SECRET: messenger-dev-secret
-      APP_ORIGIN: http://localhost:3020
+      APP_ORIGIN: "${APP_ORIGIN:-http://localhost:3020}"
       UPLOAD_DIR: /app/uploads
       S3_ENDPOINT: https://s3.ru1.storage.beget.cloud
       S3_BUCKET_NAME: c15b4d655f70-medvito-data
@@ -36,7 +36,7 @@ services:
       S3_SECRET_KEY: 5up6F9kLNHRGmPIczdqAVZgBNgKhFpAGJ1JnCJUY
       S3_REGION: ru1
       LIVEKIT_URL: ws://livekit:7880
-      LIVEKIT_PUBLIC_URL: ws://localhost:7880
+      LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}"
       LIVEKIT_API_KEY: devkey
       LIVEKIT_API_SECRET: secret
     depends_on:

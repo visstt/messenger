@@ -12,6 +12,8 @@ import {
   FiX,
 } from "react-icons/fi";
 
+import { assertMediaDevicesAvailable } from "../utils/mediaDevices";
+
 export default function Composer({
   chatId,
   isDisabled,
@@ -229,9 +231,7 @@ export default function Composer({
 
   async function startVoiceCapture() {
     if (isDisabled || hasVoiceDraft || showVideoNotePanel) return;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("Браузер не поддерживает доступ к микрофону.");
-    }
+    assertMediaDevicesAvailable("Браузер не поддерживает доступ к микрофону");
     if (typeof MediaRecorder === "undefined") {
       throw new Error("В этом браузере запись голосовых недоступна.");
     }
@@ -243,9 +243,7 @@ export default function Composer({
 
   async function startVideoNoteRecording() {
     if (isDisabled || showVoicePanel || hasAttachments || showVideoNotePanel) return;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("Браузер не поддерживает доступ к камере и микрофону.");
-    }
+    assertMediaDevicesAvailable("Браузер не поддерживает доступ к камере и микрофону");
     if (typeof MediaRecorder === "undefined") {
       throw new Error("В этом браузере запись видеокружков недоступна.");
     }
