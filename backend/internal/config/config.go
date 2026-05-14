@@ -1,12 +1,16 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
 type Config struct {
 	Port             string
 	DatabaseURL      string
 	JWTSecret        string
 	AppOrigin        string
+	CORSExtraOrigins string
 	UploadDir        string
 	S3Endpoint       string
 	S3BucketName     string
@@ -26,6 +30,7 @@ func Load() Config {
 		DatabaseURL:      env("DATABASE_URL", "postgres://messenger:messenger@localhost:5432/messenger?sslmode=disable"),
 		JWTSecret:        env("JWT_SECRET", "dev-secret-change-me"),
 		AppOrigin:        env("APP_ORIGIN", "http://localhost:3000"),
+		CORSExtraOrigins: env("CORS_EXTRA_ORIGINS", ""),
 		UploadDir:        env("UPLOAD_DIR", "./uploads"),
 		S3Endpoint:       env("S3_ENDPOINT", "https://s3.ru1.storage.beget.cloud"),
 		S3BucketName:     env("S3_BUCKET_NAME", "c15b4d655f70-medvito-data"),
@@ -45,4 +50,30 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// CorsAllowedOrigins объединяет APP_ORIGIN (несколько значений через запятую), CORS_EXTRA_ORIGINS и localhost для dev.
+func CorsAllowedOrigins(cfg Config) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, part := range strings.Split(cfg.AppOrigin, ",") {
+		add(part)
+	}
+	for _, part := range strings.Split(cfg.CORSExtraOrigins, ",") {
+		add(part)
+	}
+	add("http://localhost:3000")
+	add("http://localhost:3020")
+	return out
 }

@@ -65,7 +65,7 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 
 	r := chi.NewRouter()
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{cfg.AppOrigin, "http://localhost:3000", "http://localhost:3020"},
+		AllowedOrigins:   config.CorsAllowedOrigins(cfg),
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
