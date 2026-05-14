@@ -977,7 +977,7 @@ export default function App() {
               loading={loadingChatId === activeChat.id}
               onOpenProfile={() => setPeerProfileOpen(true)}
               onStartCall={startCall}
-              onBack={isMobile ? handleMobileBack : undefined}
+              onBack={activeChat ? handleMobileBack : undefined}
             />
 
             <MessageList

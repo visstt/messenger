@@ -7,7 +7,7 @@ export default function ImageViewerModal({ viewer, onClose, onPrev, onNext }) {
 
   return (
     <div className="modal-backdrop image-viewer-backdrop" onClick={onClose}>
-      <div className="image-viewer-card" onClick={(event) => event.stopPropagation()}>
+      <div className="image-viewer-panel" onClick={(event) => event.stopPropagation()}>
         {viewer.items.length > 1 && (
           <button
             type="button"

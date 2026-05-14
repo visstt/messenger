@@ -17,7 +17,7 @@ export default function ChatHeader({
           {onBack && (
             <button
               type="button"
-              className="ghost-button chat-back-button"
+              className="ghost-button chat-back-button chat-back-button--narrow-only"
               onClick={onBack}
               aria-label="Назад к списку чатов"
             >
