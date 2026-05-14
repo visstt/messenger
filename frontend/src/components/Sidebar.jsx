@@ -1,109 +1,89 @@
 import Avatar from "./Avatar";
 import { getChatAvatar, getChatTitle } from "../utils/chats";
 import { renderPreview } from "../utils/messages";
+import { Button, IconButton, Input, SectionTitle } from "../ui";
+import { FiSearch, FiUsers } from "react-icons/fi";
 
 export default function Sidebar({
   currentUser,
   chats,
   activeChatId,
-  activeTab,
   error,
-  onTabChange,
   onOpenProfile,
   onOpenSearch,
   onOpenGroup,
   onOpenChat,
 }) {
   return (
-    <aside className="sidebar">
-      <div className="sidebar-top">
-        <div>
-          <p className="eyebrow">Вы вошли как</p>
-          <h2>{currentUser.name}</h2>
-          <p className="sidebar-handle">@{currentUser.username}</p>
-        </div>
-        <button className="ghost-button" onClick={onOpenProfile}>
-          Профиль
-        </button>
-      </div>
-
-      <div className="sidebar-tabs" role="tablist" aria-label="Разделы">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "chats"}
-          className={`sidebar-tab ${activeTab === "chats" ? "active" : ""}`}
-          onClick={() => onTabChange("chats")}
-        >
-          Чаты
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "calls"}
-          className={`sidebar-tab ${activeTab === "calls" ? "active" : ""}`}
-          onClick={() => onTabChange("calls")}
-        >
-          Звонки
-        </button>
-      </div>
-
-      {activeTab === "chats" ? (
-        <>
-          <div className="sidebar-actions">
-            <button className="primary-button" onClick={onOpenSearch}>
-              Новый чат
-            </button>
-            <button className="ghost-button" onClick={onOpenGroup}>
-              Группа
-            </button>
+    <aside className="tg-sidebar">
+      <div className="tg-sidebar__top">
+        <SectionTitle
+          eyebrow="Signal"
+          title="Чаты"
+          right={
+            <div className="tg-sidebar__top-actions">
+              <IconButton aria-label="Поиск" title="Найти" onClick={onOpenSearch}>
+                <FiSearch />
+              </IconButton>
+              <IconButton aria-label="Новая группа" title="Новая группа" onClick={onOpenGroup}>
+                <FiUsers />
+              </IconButton>
+            </div>
+          }
+        />
+        <div className="tg-sidebar__me">
+          <Avatar user={currentUser} />
+          <div className="tg-sidebar__me-copy">
+            <div className="tg-sidebar__me-name">{currentUser.name}</div>
+            <div className="tg-sidebar__me-handle">@{currentUser.username}</div>
           </div>
+          <Button className="tg-sidebar__profile" variant="ghost" size="sm" onClick={onOpenProfile}>
+            Профиль
+          </Button>
+        </div>
+        <div className="tg-sidebar__search">
+          <Input placeholder="Поиск" aria-label="Поиск" />
+        </div>
+      </div>
 
-          {error && <div className="inline-error">{error}</div>}
-
-          <div className="chat-list">
-            {chats.length === 0 && (
-              <div className="empty-card">
-                <h3>Чатов пока нет</h3>
-                <p>Откройте поиск пользователей и начните первый личный или групповой чат.</p>
+      <>
+        {error && <div className="tg-inline-error">{error}</div>}
+        <div className="tg-dialogs">
+          {chats.length === 0 && (
+            <div className="tg-empty">
+              <div className="tg-empty__title">Чатов пока нет</div>
+              <div className="tg-empty__text">
+                Нажмите “Новый чат” или “Группа”, чтобы начать переписку.
               </div>
-            )}
-
-            {chats.map((chat) => (
-              <button
-                key={chat.id}
-                className={`chat-card ${activeChatId === chat.id ? "active" : ""}`}
-                onClick={() => onOpenChat(chat.id)}
-              >
-                <Avatar user={getChatAvatar(chat)} />
-                <div className="chat-card-body">
-                  <div className="chat-card-row">
-                    <strong>{getChatTitle(chat)}</strong>
-                    <span>
-                      {new Date(chat.lastMessage?.createdAt || chat.updatedAt).toLocaleTimeString(
-                        [],
-                        {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        }
-                      )}
-                    </span>
-                  </div>
-                  <div className="chat-card-row chat-card-preview">
-                    <span>{renderPreview(chat.lastMessage)}</span>
-                    {chat.unreadCount > 0 && <em>{chat.unreadCount}</em>}
+            </div>
+          )}
+          {chats.map((chat) => (
+            <button
+              key={chat.id}
+              className={`tg-dialog ${activeChatId === chat.id ? "active" : ""}`}
+              onClick={() => onOpenChat(chat.id)}
+              type="button"
+            >
+              <Avatar user={getChatAvatar(chat)} />
+              <div className="tg-dialog__body">
+                <div className="tg-dialog__row">
+                  <div className="tg-dialog__title">{getChatTitle(chat)}</div>
+                  <div className="tg-dialog__time">
+                    {new Date(chat.lastMessage?.createdAt || chat.updatedAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
                   </div>
                 </div>
-              </button>
-            ))}
-          </div>
-        </>
-      ) : (
-        <div className="empty-card sidebar-placeholder">
-          <h3>Звонки</h3>
-          <p>Раздел подготовлен. Наполнение для звонков добавим позже.</p>
+                <div className="tg-dialog__row tg-dialog__row-sub">
+                  <div className="tg-dialog__preview">{renderPreview(chat.lastMessage)}</div>
+                  {chat.unreadCount > 0 && <div className="tg-badge">{chat.unreadCount}</div>}
+                </div>
+              </div>
+            </button>
+          ))}
         </div>
-      )}
+      </>
     </aside>
   );
 }

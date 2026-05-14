@@ -358,6 +358,14 @@ func (s *Store) UpdatePublicKey(ctx context.Context, userID int64, publicKey str
 }
 
 func (s *Store) EnableChatE2EE(ctx context.Context, currentUserID, chatID int64) (ChatDetails, Message, []int64, bool, error) {
+	return s.setChatE2EE(ctx, currentUserID, chatID, true)
+}
+
+func (s *Store) DisableChatE2EE(ctx context.Context, currentUserID, chatID int64) (ChatDetails, Message, []int64, bool, error) {
+	return s.setChatE2EE(ctx, currentUserID, chatID, false)
+}
+
+func (s *Store) setChatE2EE(ctx context.Context, currentUserID, chatID int64, nextEnabled bool) (ChatDetails, Message, []int64, bool, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return ChatDetails{}, Message{}, nil, false, err
@@ -386,20 +394,24 @@ func (s *Store) EnableChatE2EE(ctx context.Context, currentUserID, chatID int64)
 	chatWasUpdated := false
 	var systemMessage Message
 
-	if !enabled {
+	if enabled != nextEnabled {
 		if _, err := tx.Exec(ctx, `
 			UPDATE chats
-			SET e2ee_enabled = TRUE, updated_at = NOW()
+			SET e2ee_enabled = $2, updated_at = NOW()
 			WHERE id = $1
-		`, chatID); err != nil {
+		`, chatID, nextEnabled); err != nil {
 			return ChatDetails{}, Message{}, nil, false, err
 		}
 
+		systemText := "Шифрование сообщений выключено. Новые сообщения будут отправляться без E2EE."
+		if nextEnabled {
+			systemText = "Шифрование сообщений включено. Кроме участников диалога никто не сможет получить к ним доступ."
+		}
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO messages (chat_id, sender_id, kind, text)
 			VALUES ($1, $2, 'system', $3)
 			RETURNING id, chat_id, sender_id, kind, text, file_url, file_name, duration_sec, encrypted_payload, encryption_meta, reply_to_message_id, pinned_at, edited_at, deleted_at, created_at
-		`, chatID, currentUserID, "Шифрование сообщений включено. Кроме участников диалога никто не сможет получить к ним доступ.").Scan(
+		`, chatID, currentUserID, systemText).Scan(
 			&systemMessage.ID,
 			&systemMessage.ChatID,
 			&systemMessage.SenderID,
@@ -781,6 +793,10 @@ func (s *Store) ValidateNewMessage(ctx context.Context, input NewMessage) error 
 	case "text":
 		if strings.TrimSpace(input.Text) == "" && strings.TrimSpace(input.EncryptedPayload) == "" {
 			return fmt.Errorf("message text is required")
+		}
+	case "system":
+		if strings.TrimSpace(input.Text) == "" {
+			return fmt.Errorf("system message text is required")
 		}
 	case "image", "video", "video_note", "file", "voice":
 		if strings.TrimSpace(input.FileURL) == "" {

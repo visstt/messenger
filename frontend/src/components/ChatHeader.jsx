@@ -1,4 +1,4 @@
-import { FiChevronLeft, FiLock } from "react-icons/fi";
+import { FiChevronLeft, FiPhone, FiVideo } from "react-icons/fi";
 import Avatar from "./Avatar";
 import { getChatAvatar, getChatSubtitle, getChatTitle } from "../utils/chats";
 
@@ -6,9 +6,8 @@ export default function ChatHeader({
   chat,
   activeTyping,
   loading,
-  securityState,
-  onOpenE2EE,
   onOpenProfile,
+  onStartCall,
   onBack,
 }) {
   return (
@@ -38,13 +37,21 @@ export default function ChatHeader({
         <div className="chat-header-side">
           <button
             type="button"
-            className="status-pill e2ee-trigger"
-            onClick={onOpenE2EE}
-            aria-label="Настройки сквозного шифрования"
-            title={securityState?.headerLabel || "E2EE"}
+            className="header-action-button"
+            onClick={() => onStartCall?.("audio")}
+            aria-label="Начать аудиозвонок"
+            title="Аудиозвонок"
           >
-            <FiLock />
-            <span>{securityState?.headerLabel || "E2EE"}</span>
+            <FiPhone />
+          </button>
+          <button
+            type="button"
+            className="header-action-button"
+            onClick={() => onStartCall?.("video")}
+            aria-label="Начать видеозвонок"
+            title="Видеозвонок"
+          >
+            <FiVideo />
           </button>
           {loading && <span className="status-pill">обновление...</span>}
         </div>

@@ -13,6 +13,7 @@ import (
 	"messenger/backend/internal/db"
 	"messenger/backend/internal/httpapi"
 	"messenger/backend/internal/realtime"
+	"messenger/backend/internal/storage"
 	"messenger/backend/internal/store"
 )
 
@@ -40,10 +41,15 @@ func main() {
 		log.Fatalf("seed demo data: %v", err)
 	}
 
+	uploader, err := storage.NewUploader(ctx, cfg)
+	if err != nil {
+		log.Fatalf("configure storage: %v", err)
+	}
+
 	hub := realtime.NewHub()
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           httpapi.NewServer(cfg, st, hub),
+		Handler:           httpapi.NewServer(cfg, st, hub, uploader),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

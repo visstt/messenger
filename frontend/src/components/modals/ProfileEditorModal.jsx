@@ -1,5 +1,6 @@
 import { FiUpload, FiX } from "react-icons/fi";
 import Avatar from "../Avatar";
+import { Button, Input, Modal, Textarea } from "../../ui";
 
 export default function ProfileEditorModal({
   open,
@@ -12,24 +13,13 @@ export default function ProfileEditorModal({
   if (!open) return null;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <form
-        className="modal-card profile-editor"
-        onSubmit={onSubmit}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="modal-header">
-          <h3>Редактирование профиля</h3>
-          <button className="ghost-button" type="button" onClick={onClose}>
-            <FiX />
-          </button>
-        </div>
-
-        <div className="avatar-upload-row">
+    <Modal open={open} onClose={onClose} title="Редактирование профиля" contentClassName="tg-profile-editor">
+      <form onSubmit={onSubmit} className="tg-profile-editor__form">
+        <div className="tg-profile-editor__avatar">
           <Avatar user={draft} />
-          <label className="ghost-button avatar-upload-button">
+          <label className="tg-profile-editor__upload">
             <FiUpload />
-            Загрузить аватар
+            <span>Загрузить аватар</span>
             <input
               type="file"
               accept="image/*"
@@ -42,26 +32,32 @@ export default function ProfileEditorModal({
           </label>
         </div>
 
-        <input
+        <Input
           placeholder="Имя"
           value={draft.name}
           onChange={(event) => onChange((prev) => ({ ...prev, name: event.target.value }))}
         />
-        <input
+        <Input
           placeholder="Имя пользователя"
           value={draft.username}
           onChange={(event) => onChange((prev) => ({ ...prev, username: event.target.value }))}
         />
-        <textarea
+        <Textarea
           rows="4"
           placeholder="О себе"
           value={draft.bio}
           onChange={(event) => onChange((prev) => ({ ...prev, bio: event.target.value }))}
         />
-        <button className="primary-button" type="submit">
-          Сохранить
-        </button>
+
+        <div className="tg-profile-editor__actions">
+          <Button variant="ghost" type="button" onClick={onClose}>
+            Отмена
+          </Button>
+          <Button variant="primary" type="submit">
+            Сохранить
+          </Button>
+        </div>
       </form>
-    </div>
+    </Modal>
   );
 }

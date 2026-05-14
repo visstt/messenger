@@ -462,7 +462,7 @@ export default function Composer({
   return (
     <form
       ref={formRef}
-      className={`composer ${showVoicePanel || showVideoNotePanel ? "has-voice-panel" : ""}`}
+      className={`composer tg-composer ${showVoicePanel || showVideoNotePanel ? "has-voice-panel" : ""}`}
       onSubmit={async (event) => {
         event.preventDefault();
         const nextText = text.trim();
@@ -487,18 +487,18 @@ export default function Composer({
       }}
     >
       {replyMessage && (
-        <div className="reply-draft" aria-label="Reply draft">
-          <div className="reply-draft-copy">
+        <div className="reply-draft tg-reply-draft" aria-label="Reply draft">
+          <div className="reply-draft-copy tg-reply-draft__copy">
             <strong>{`Ответ: ${replyLabel}`}</strong>
             <span>{replyPreview}</span>
           </div>
-          <button type="button" className="reply-draft-close" onClick={onCancelReply}>
+          <button type="button" className="reply-draft-close tg-reply-draft__close" onClick={onCancelReply}>
             <FiX />
           </button>
         </div>
       )}
 
-      {recorderError && <div className="inline-error">{recorderError}</div>}
+      {recorderError && <div className="inline-error tg-composer-error">{recorderError}</div>}
 
       {showVideoNotePanel && (
         <div className="video-note-draft" aria-label="Video note draft">
@@ -552,16 +552,16 @@ export default function Composer({
       )}
 
       {hasAttachments && (
-        <div className="attachment-draft" aria-label="Selected attachments">
-          <div className="attachment-draft-head">
+        <div className="attachment-draft tg-attachment-draft" aria-label="Selected attachments">
+          <div className="attachment-draft-head tg-attachment-draft__head">
             <span>{attachments.length === 1 ? "1 вложение" : `${attachments.length} вложений`}</span>
             <button type="button" onClick={clearAttachments}>
               Очистить
             </button>
           </div>
-          <div className="attachment-draft-list">
+          <div className="attachment-draft-list tg-attachment-draft__list">
             {attachments.map((item) => (
-              <div className={`attachment-draft-item is-${item.type}`} key={item.id}>
+              <div className={`attachment-draft-item tg-attachment-draft__item is-${item.type}`} key={item.id}>
                 <AttachmentPreview item={item} />
                 {item.type === "file" && (
                   <div>
@@ -583,7 +583,7 @@ export default function Composer({
         </div>
       )}
 
-      <div className="composer-row" title={disabledTitle || ""}>
+      <div className="composer-row tg-composer__row" title={disabledTitle || ""}>
         <input
           ref={fileInputRef}
           type="file"
@@ -601,7 +601,7 @@ export default function Composer({
           }}
         />
         <button
-          className="attach-button"
+          className="attach-button tg-composer__icon-button"
           type="button"
           aria-label="Прикрепить файл"
           title={disabledTitle || "Прикрепить файл"}
@@ -613,7 +613,7 @@ export default function Composer({
 
         {!isMobileComposer && (
           <button
-            className={`ghost-button video-note-toggle ${isRecordingVideoNote ? "danger-button is-recording" : ""}`}
+            className={`ghost-button video-note-toggle tg-composer__icon-button ${isRecordingVideoNote ? "danger-button is-recording" : ""}`}
             type="button"
             aria-label={isRecordingVideoNote ? "Остановить видеокружок" : "Записать видеокружок"}
             title={disabledTitle || (isRecordingVideoNote ? "Остановить видеокружок" : "Записать видеокружок")}
@@ -635,8 +635,9 @@ export default function Composer({
           </button>
         )}
 
-        <div className="composer-input-shell">
+        <div className="composer-input-shell tg-composer__input-shell">
         <textarea
+          className="tg-composer__input"
           placeholder={isMobileComposer ? "" : inputPlaceholder || "Напишите сообщение"}
           value={text}
           disabled={showVoicePanel || showVideoNotePanel || isDisabled}
@@ -741,7 +742,7 @@ export default function Composer({
 
         {showMobileRecorderToggle ? (
           <button
-            className={`ghost-button voice-toggle mobile-recorder-toggle ${
+            className={`ghost-button voice-toggle tg-composer__icon-button mobile-recorder-toggle ${
               isRecordingInProgress || isRecordingVideoNote ? "danger-button is-recording" : ""
             }`}
             type="button"
@@ -774,7 +775,7 @@ export default function Composer({
           </button>
         ) : (
           <button
-            className={`ghost-button voice-toggle ${isRecordingInProgress ? "danger-button is-recording" : ""}`}
+            className={`ghost-button voice-toggle tg-composer__icon-button ${isRecordingInProgress ? "danger-button is-recording" : ""}`}
             type="button"
             aria-label={isRecordingInProgress ? "Остановить запись" : "Записать голосовое"}
             title={disabledTitle || (isRecordingInProgress ? "Остановить запись" : "Записать голосовое")}
@@ -797,7 +798,7 @@ export default function Composer({
         )}
 
         <button
-          className="primary-button composer-send-button"
+          className="primary-button composer-send-button tg-composer__send"
           type="submit"
           disabled={showVoicePanel || showVideoNotePanel || isDisabled}
           aria-label="Отправить сообщение"

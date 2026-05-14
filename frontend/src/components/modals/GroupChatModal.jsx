@@ -1,5 +1,6 @@
 import { FiCheck, FiUsers, FiX } from "react-icons/fi";
 import Avatar from "../Avatar";
+import { Button, Input, Modal } from "../../ui";
 
 export default function GroupChatModal({
   open,
@@ -18,21 +19,11 @@ export default function GroupChatModal({
   const selectedIds = new Set(selectedUsers.map((user) => user.id));
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card group-chat-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-header">
-          <div>
-            <p className="eyebrow">Новая группа</p>
-            <h3>Соберите чат</h3>
-          </div>
-          <button className="ghost-button profile-close" type="button" onClick={onClose}>
-            <FiX />
-          </button>
-        </div>
-
-        <label className="group-field">
+    <Modal open={open} onClose={onClose} title="Новая группа" contentClassName="tg-group-modal">
+      <div className="tg-group-modal__form">
+        <label className="tg-field">
           <span>Название</span>
-          <input
+          <Input
             autoFocus
             placeholder="Например: Команда проекта"
             value={title}
@@ -40,9 +31,9 @@ export default function GroupChatModal({
           />
         </label>
 
-        <label className="group-field">
+        <label className="tg-field">
           <span>Участники</span>
-          <input
+          <Input
             placeholder="Поиск по имени, username или почте"
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
@@ -50,37 +41,38 @@ export default function GroupChatModal({
         </label>
 
         {selectedUsers.length > 0 && (
-          <div className="selected-users">
+          <div className="tg-selected-users">
             {selectedUsers.map((user) => (
               <button
                 type="button"
-                className="selected-user-chip"
+                className="tg-selected-user"
                 key={user.id}
                 onClick={() => onToggleUser(user)}
               >
-                {user.name}
+                <Avatar user={user} />
+                <span>{user.name}</span>
                 <FiX />
               </button>
             ))}
           </div>
         )}
 
-        <div className="search-results group-results">
+        <div className="tg-group-results">
           {results.map((user) => {
             const selected = selectedIds.has(user.id);
             return (
               <button
                 key={user.id}
                 type="button"
-                className={`search-row ${selected ? "selected" : ""}`}
+                className={`tg-group-user ${selected ? "selected" : ""}`}
                 onClick={() => onToggleUser(user)}
               >
                 <Avatar user={user} />
-                <div>
+                <div className="tg-group-user__copy">
                   <strong>{user.name}</strong>
-                  <p>@{user.username}</p>
+                  <span>@{user.username}</span>
                 </div>
-                <span className="group-select-indicator">
+                <span className="tg-group-user__check">
                   {selected ? <FiCheck /> : <FiUsers />}
                 </span>
               </button>
@@ -88,10 +80,10 @@ export default function GroupChatModal({
           })}
         </div>
 
-        <button className="primary-button" type="button" onClick={onCreate}>
+        <Button type="button" onClick={onCreate}>
           Создать группу
-        </button>
+        </Button>
       </div>
-    </div>
+    </Modal>
   );
 }

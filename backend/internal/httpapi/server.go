@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,17 +16,35 @@ import (
 	"messenger/backend/internal/auth"
 	"messenger/backend/internal/config"
 	"messenger/backend/internal/realtime"
+	"messenger/backend/internal/storage"
 	"messenger/backend/internal/store"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 )
+
+type liveKitVideoGrant struct {
+	Room           string `json:"room"`
+	RoomJoin       bool   `json:"roomJoin"`
+	CanPublish     bool   `json:"canPublish"`
+	CanSubscribe   bool   `json:"canSubscribe"`
+	CanPublishData bool   `json:"canPublishData"`
+}
+
+type liveKitTokenClaims struct {
+	jwt.RegisteredClaims
+	Name     string            `json:"name"`
+	Metadata string            `json:"metadata,omitempty"`
+	Video    liveKitVideoGrant `json:"video"`
+}
 
 type Server struct {
 	cfg      config.Config
 	store    *store.Store
 	hub      *realtime.Hub
+	uploader storage.Uploader
 	upgrader websocket.Upgrader
 }
 
@@ -34,11 +52,12 @@ type contextKey string
 
 const userIDKey contextKey = "userID"
 
-func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub) http.Handler {
+func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader storage.Uploader) http.Handler {
 	s := &Server{
-		cfg:   cfg,
-		store: st,
-		hub:   hub,
+		cfg:      cfg,
+		store:    st,
+		hub:      hub,
+		uploader: uploader,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -57,7 +76,11 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub) http.Handl
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	r.Handle("/uploads/*", http.StripPrefix("/uploads/", http.FileServer(http.Dir(cfg.UploadDir))))
+	if _, ok := uploader.(storage.Downloader); ok {
+		r.Get("/uploads/*", s.handleUploadedObject)
+	} else {
+		r.Handle("/uploads/*", http.StripPrefix("/uploads/", http.FileServer(http.Dir(cfg.UploadDir))))
+	}
 
 	r.Post("/api/auth/register", s.handleRegister)
 	r.Post("/api/auth/login", s.handleLogin)
@@ -75,6 +98,7 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub) http.Handl
 		protected.Post("/api/chats/private", s.handleCreatePrivateChat)
 		protected.Post("/api/chats/group", s.handleCreateGroupChat)
 		protected.Post("/api/chats/{chatID}/e2ee/enable", s.handleEnableChatE2EE)
+		protected.Post("/api/chats/{chatID}/e2ee/disable", s.handleDisableChatE2EE)
 		protected.Get("/api/chats/{chatID}/messages", s.handleListMessages)
 		protected.Post("/api/chats/{chatID}/messages/text", s.handleSendTextMessage)
 		protected.Post("/api/chats/{chatID}/messages/image", s.handleSendImageMessage)
@@ -84,6 +108,10 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub) http.Handl
 		protected.Post("/api/chats/{chatID}/messages/voice", s.handleSendVoiceMessage)
 		protected.Post("/api/chats/{chatID}/read", s.handleMarkRead)
 		protected.Post("/api/chats/{chatID}/typing", s.handleTyping)
+		protected.Post("/api/chats/{chatID}/calls/token", s.handleCreateCallToken)
+		protected.Post("/api/chats/{chatID}/calls/invite", s.handleInviteCall)
+		protected.Post("/api/chats/{chatID}/calls/accept", s.handleAcceptCall)
+		protected.Post("/api/chats/{chatID}/calls/decline", s.handleDeclineCall)
 		protected.Post("/api/messages/{messageID}/pin", s.handlePinMessage)
 		protected.Delete("/api/messages/{messageID}/pin", s.handleUnpinMessage)
 		protected.Patch("/api/messages/{messageID}", s.handleEditMessage)
@@ -212,26 +240,71 @@ func (s *Server) handleUploadAvatar(w http.ResponseWriter, r *http.Request) {
 
 	extension := filepath.Ext(header.Filename)
 	filename := fmt.Sprintf("avatar-%d-%d%s", time.Now().UnixNano(), currentUserID(r.Context()), extension)
-	targetPath := filepath.Join(s.cfg.UploadDir, filename)
-
-	dst, err := os.Create(targetPath)
+	publicURL, err := s.uploader.Upload(
+		r.Context(),
+		"avatars/"+filename,
+		file,
+		storage.ContentType(header.Filename, header.Header.Get("Content-Type")),
+	)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save avatar")
-		return
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, file); err != nil {
+		log.Printf("upload avatar failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to save avatar")
 		return
 	}
 
-	user, err := s.store.UpdateAvatar(r.Context(), currentUserID(r.Context()), "/uploads/"+filename)
+	user, err := s.store.UpdateAvatar(r.Context(), currentUserID(r.Context()), publicURL)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to update avatar")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+func (s *Server) handleUploadedObject(w http.ResponseWriter, r *http.Request) {
+	downloader, ok := s.uploader.(storage.Downloader)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	key := strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	if key == "" || strings.Contains(key, "..") {
+		http.NotFound(w, r)
+		return
+	}
+
+	object, err := downloader.Download(r.Context(), key, r.Header.Get("Range"))
+	if err != nil {
+		s.serveLocalUploadedObject(w, r, key)
+		return
+	}
+	defer object.Body.Close()
+
+	if object.ContentType != "" {
+		w.Header().Set("Content-Type", object.ContentType)
+	}
+	if object.AcceptRanges != "" {
+		w.Header().Set("Accept-Ranges", object.AcceptRanges)
+	}
+	if object.ContentLength != nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(*object.ContentLength, 10))
+	}
+	if object.ContentRange != "" {
+		w.Header().Set("Content-Range", object.ContentRange)
+		w.WriteHeader(http.StatusPartialContent)
+	}
+
+	_, _ = io.Copy(w, object.Body)
+}
+
+func (s *Server) serveLocalUploadedObject(w http.ResponseWriter, r *http.Request, key string) {
+	cleanKey := filepath.Clean(filepath.FromSlash(key))
+	if cleanKey == "." || strings.HasPrefix(cleanKey, "..") || filepath.IsAbs(cleanKey) {
+		http.NotFound(w, r)
+		return
+	}
+
+	http.ServeFile(w, r, filepath.Join(s.cfg.UploadDir, cleanKey))
 }
 
 func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +356,25 @@ func (s *Server) handleEnableChatE2EE(w http.ResponseWriter, r *http.Request) {
 	chat, msg, recipientIDs, changed, err := s.store.EnableChatE2EE(r.Context(), currentUserID(r.Context()), chatID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to enable E2EE")
+		return
+	}
+
+	if changed {
+		s.pushChatE2EEEvent(chat, recipientIDs, currentUserID(r.Context()))
+		s.pushMessageEvents(msg, recipientIDs, currentUserID(r.Context()))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"chat":    chat,
+		"changed": changed,
+	})
+}
+
+func (s *Server) handleDisableChatE2EE(w http.ResponseWriter, r *http.Request) {
+	chatID := parseInt64Param(chi.URLParam(r, "chatID"))
+	chat, msg, recipientIDs, changed, err := s.store.DisableChatE2EE(r.Context(), currentUserID(r.Context()), chatID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to disable E2EE")
 		return
 	}
 
@@ -397,26 +489,20 @@ func (s *Server) handleFileMessage(w http.ResponseWriter, r *http.Request, kind 
 
 		extension := filepath.Ext(header.Filename)
 		filename := fmt.Sprintf("%d-%d%s", time.Now().UnixNano(), currentUserID(r.Context()), extension)
-		targetPath := filepath.Join(s.cfg.UploadDir, filename)
-
-		dst, err := os.Create(targetPath)
-		if err != nil {
-			file.Close()
-			writeError(w, http.StatusInternalServerError, "failed to save file")
-			return
-		}
-
-		if _, err := io.Copy(dst, file); err != nil {
-			dst.Close()
-			file.Close()
-			writeError(w, http.StatusInternalServerError, "failed to save file")
-			return
-		}
-
-		dst.Close()
+		publicURL, err := s.uploader.Upload(
+			r.Context(),
+			"uploads/"+filename,
+			file,
+			storage.ContentType(header.Filename, header.Header.Get("Content-Type")),
+		)
 		file.Close()
+		if err != nil {
+			log.Printf("upload file failed: kind=%s filename=%q error=%v", kind, header.Filename, err)
+			writeError(w, http.StatusInternalServerError, "failed to save file")
+			return
+		}
 
-		savedURLs = append(savedURLs, "/uploads/"+filename)
+		savedURLs = append(savedURLs, publicURL)
 		savedNames = append(savedNames, header.Filename)
 	}
 
@@ -490,6 +576,182 @@ func (s *Server) handleTyping(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleCreateCallToken(w http.ResponseWriter, r *http.Request) {
+	chatID := parseInt64Param(chi.URLParam(r, "chatID"))
+	userID := currentUserID(r.Context())
+
+	var input struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	chat, err := s.store.GetChatDetails(r.Context(), userID, chatID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "chat not found")
+		return
+	}
+	user, err := s.store.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "user not found")
+		return
+	}
+
+	roomName := fmt.Sprintf("messenger-chat-%d", chat.ID)
+	identity := fmt.Sprintf("user-%d", user.ID)
+	now := time.Now()
+	claims := liveKitTokenClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    s.cfg.LiveKitAPIKey,
+			Subject:   identity,
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now.Add(-10 * time.Second)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(2 * time.Hour)),
+		},
+		Name: user.Name,
+		Metadata: fmt.Sprintf(`{"chatId":%d,"userId":%d,"kind":%q}`,
+			chat.ID,
+			user.ID,
+			normalizeCallKind(input.Kind),
+		),
+		Video: liveKitVideoGrant{
+			Room:           roomName,
+			RoomJoin:       true,
+			CanPublish:     true,
+			CanSubscribe:   true,
+			CanPublishData: true,
+		},
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.cfg.LiveKitAPISecret))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create call token")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token":     token,
+		"serverUrl": s.cfg.LiveKitPublicURL,
+		"room":      roomName,
+		"chat":      chat,
+	})
+}
+
+func (s *Server) handleInviteCall(w http.ResponseWriter, r *http.Request) {
+	chatID := parseInt64Param(chi.URLParam(r, "chatID"))
+	actorID := currentUserID(r.Context())
+
+	var input struct {
+		CallID string `json:"callId"`
+		Kind   string `json:"kind"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if input.CallID == "" {
+		input.CallID = fmt.Sprintf("call-%d-%d", chatID, time.Now().UnixNano())
+	}
+
+	chat, err := s.store.GetChatDetails(r.Context(), actorID, chatID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "chat not found")
+		return
+	}
+	actor, err := s.store.GetUserByID(r.Context(), actorID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "user not found")
+		return
+	}
+
+	callKind := normalizeCallKind(input.Kind)
+	systemText := "Входящий видеозвонок"
+	if callKind == "audio" {
+		systemText = "Входящий аудиозвонок"
+	}
+	systemText = fmt.Sprintf("%s от %s", systemText, actor.Name)
+
+	msg, recipientIDs, err := s.store.CreateMessage(r.Context(), store.NewMessage{
+		ChatID:   chat.ID,
+		SenderID: actorID,
+		Kind:     "system",
+		Text:     systemText,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create call message")
+		return
+	}
+	s.pushMessageEvents(msg, recipientIDs, actorID)
+
+	event := realtime.Event{
+		Type: "call:incoming",
+		Data: map[string]any{
+			"callId": input.CallID,
+			"kind":   callKind,
+			"chat":   chat,
+			"from":   actor,
+		},
+	}
+	for _, participant := range chat.Participants {
+		if participant.ID != actorID {
+			s.hub.BroadcastToUser(participant.ID, event)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"callId": input.CallID})
+}
+
+func (s *Server) handleAcceptCall(w http.ResponseWriter, r *http.Request) {
+	s.handleCallResponse(w, r, "call:accepted")
+}
+
+func (s *Server) handleDeclineCall(w http.ResponseWriter, r *http.Request) {
+	s.handleCallResponse(w, r, "call:declined")
+}
+
+func (s *Server) handleCallResponse(w http.ResponseWriter, r *http.Request, eventType string) {
+	chatID := parseInt64Param(chi.URLParam(r, "chatID"))
+	actorID := currentUserID(r.Context())
+
+	var input struct {
+		CallID string `json:"callId"`
+		Kind   string `json:"kind"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	chat, err := s.store.GetChatDetails(r.Context(), actorID, chatID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "chat not found")
+		return
+	}
+	actor, err := s.store.GetUserByID(r.Context(), actorID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "user not found")
+		return
+	}
+
+	event := realtime.Event{
+		Type: eventType,
+		Data: map[string]any{
+			"callId": input.CallID,
+			"kind":   normalizeCallKind(input.Kind),
+			"chatId": chat.ID,
+			"from":   actor,
+		},
+	}
+	for _, participant := range chat.Participants {
+		if participant.ID != actorID {
+			s.hub.BroadcastToUser(participant.ID, event)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -636,6 +898,13 @@ func (s *Server) pushChatCreatedEvent(chat store.ChatDetails, creatorID int64) {
 			s.hub.BroadcastToUser(participant.ID, event)
 		}
 	}
+}
+
+func normalizeCallKind(kind string) string {
+	if kind == "audio" {
+		return "audio"
+	}
+	return "video"
 }
 
 func (s *Server) pushChatE2EEEvent(chat store.ChatDetails, recipientIDs []int64, actorID int64) {

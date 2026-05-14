@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { FiDownload, FiFile, FiImage, FiMic, FiVideo, FiX } from "react-icons/fi";
+import { FiDownload, FiFile, FiImage, FiMic, FiVideo } from "react-icons/fi";
 import Avatar from "../Avatar";
 import VideoCircle from "../VideoCircle";
 import { formatClock, parseAttachmentItems, parseImageItems } from "../../utils/messages";
 import { getChatAvatar, getChatSubtitle, getChatTitle } from "../../utils/chats";
+import { Modal } from "../../ui";
 
 const MEDIA_TABS = [
   { id: "photos", label: "Фото", icon: FiImage },
@@ -16,6 +17,7 @@ export default function PeerProfileModal({ open, chat, messages = [], onClose, o
   const [activeTab, setActiveTab] = useState("photos");
   const media = useMemo(() => buildMediaCollections(messages), [messages]);
   const isGroup = chat?.kind === "group";
+  const totalMediaCount = MEDIA_TABS.reduce((count, tab) => count + media[tab.id].length, 0);
 
   useEffect(() => {
     if (open) setActiveTab("photos");
@@ -24,67 +26,72 @@ export default function PeerProfileModal({ open, chat, messages = [], onClose, o
   if (!open || !chat) return null;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal-card profile-showcase peer-media-profile"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <button
-          type="button"
-          className="ghost-button profile-close"
-          onClick={onClose}
-          aria-label="Закрыть профиль"
-        >
-          <FiX />
-        </button>
-
-        <div className="profile-hero peer-media-hero">
-          <div className="profile-hero-avatar">
-            <Avatar user={getChatAvatar(chat)} />
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={isGroup ? "Профиль чата" : "Профиль пользователя"}
+      contentClassName="tg-peer-media tg-peer-profile"
+    >
+      <div className="tg-peer-media__hero">
+        <Avatar user={getChatAvatar(chat)} />
+        <div className="tg-peer-media__hero-copy">
+          <div className="tg-peer-media__title">{getChatTitle(chat)}</div>
+          <div className="tg-peer-media__subtitle">{getChatSubtitle(chat)}</div>
+          <div className="tg-peer-media__description">
+            {isGroup
+              ? "Общий чат и вся история вложений."
+              : "Диалог, профиль и общие медиафайлы."}
           </div>
-          <div className="profile-hero-copy">
-            <p className="eyebrow">{isGroup ? "Медиа чата" : "Медиа диалога"}</p>
-            <h3>{getChatTitle(chat)}</h3>
-            <p>{getChatSubtitle(chat)}</p>
-            <span>
-              {isGroup
-                ? "Все вложения из этой группы собраны по типам для быстрого просмотра."
-                : "Здесь собраны все фото, видео, документы и голосовые сообщения из вашего диалога."}
-            </span>
-          </div>
-        </div>
-
-        <div className="peer-media-tabs" role="tablist" aria-label="Категории медиа">
-          {MEDIA_TABS.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            const count = media[tab.id].length;
-
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                className={`peer-media-tab ${isActive ? "active" : ""}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <Icon />
-                <span>{tab.label}</span>
-                <small>{count}</small>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="peer-media-panel">
-          {activeTab === "photos" && <PhotoSection items={media.photos} onOpenImage={onOpenImage} />}
-          {activeTab === "videos" && <VideoSection items={media.videos} />}
-          {activeTab === "files" && <FileSection items={media.files} />}
-          {activeTab === "voices" && <VoiceSection items={media.voices} />}
         </div>
       </div>
-    </div>
+
+      <div className="tg-peer-profile__stats" aria-label="Статистика медиа">
+        <div className="tg-peer-profile__stat">
+          <strong>{messages.filter((message) => message.kind !== "system").length}</strong>
+          <span>сообщений</span>
+        </div>
+        <div className="tg-peer-profile__stat">
+          <strong>{totalMediaCount}</strong>
+          <span>медиа</span>
+        </div>
+        <div className="tg-peer-profile__stat">
+          <strong>{media.files.length}</strong>
+          <span>документов</span>
+        </div>
+      </div>
+
+      <div className="tg-peer-profile__section-title">Медиа</div>
+
+      <div className="tg-peer-media__tabs" role="tablist" aria-label="Категории медиа">
+        {MEDIA_TABS.map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          const count = media[tab.id].length;
+
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              className={`tg-peer-media__tab ${isActive ? "active" : ""}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              <Icon />
+              <span>{tab.label}</span>
+              <small>{count}</small>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="tg-peer-media__panel">
+        {activeTab === "photos" && <PhotoSection items={media.photos} onOpenImage={onOpenImage} />}
+        {activeTab === "videos" && <VideoSection items={media.videos} />}
+        {activeTab === "files" && <FileSection items={media.files} />}
+        {activeTab === "voices" && <VoiceSection items={media.voices} />}
+      </div>
+    </Modal>
   );
 }
 

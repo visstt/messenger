@@ -14,6 +14,7 @@ import {
   FiX,
 } from "react-icons/fi";
 import VideoCircle from "./VideoCircle";
+import { normalizeMediaUrl } from "../utils/mediaUrls";
 import {
   formatClock,
   groupMessages,
@@ -68,12 +69,7 @@ export default function MessageList({
 
   useEffect(() => {
     function closeMenu(event) {
-      console.log("[message-menu] global pointerdown", {
-        button: event.button,
-        target: event.target?.className,
-      });
       if (event.button === 2) return;
-      console.log("[message-menu] close from global pointerdown");
       setContextMenu(null);
     }
 
@@ -94,23 +90,12 @@ export default function MessageList({
   }
 
   function openMessageMenu(message, event) {
-    console.log("[message-menu] openMessageMenu called", {
-      messageId: message?.id,
-      deletedAt: message?.deletedAt,
-      e2eeState: message?.e2eeState,
-      eventType: event?.type,
-      button: event?.button,
-      pointerType: event?.pointerType,
-      clientX: event?.clientX,
-      clientY: event?.clientY,
-    });
     if (message.deletedAt || message.e2eeState === "locked") return;
     const rect = event.currentTarget?.getBoundingClientRect?.();
     const rawX = event.clientX || rect?.left || window.innerWidth / 2;
     const rawY = event.clientY || rect?.top || window.innerHeight / 2;
     const x = Math.min(rawX, window.innerWidth - 220);
     const y = Math.min(rawY, window.innerHeight - 280);
-    console.log("[message-menu] setContextMenu", { messageId: message.id, x, y });
     setContextMenu({ message, x, y });
   }
 
@@ -167,36 +152,17 @@ export default function MessageList({
               className={`bubble ${own ? "own" : ""} ${message.pinnedAt ? "is-pinned" : ""}`}
               data-message-id={message.id}
               onContextMenu={(event) => {
-                console.log("[message-menu] bubble contextmenu", {
-                  messageId: message.id,
-                  button: event.button,
-                  clientX: event.clientX,
-                  clientY: event.clientY,
-                });
                 event.preventDefault();
                 event.stopPropagation();
                 openMessageMenu(message, event);
               }}
               onMouseDown={(event) => {
-                console.log("[message-menu] bubble mousedown", {
-                  messageId: message.id,
-                  button: event.button,
-                  clientX: event.clientX,
-                  clientY: event.clientY,
-                });
                 if (event.button !== 2) return;
                 event.preventDefault();
                 event.stopPropagation();
                 openMessageMenu(message, event);
               }}
               onPointerDown={(event) => {
-                console.log("[message-menu] bubble pointerdown", {
-                  messageId: message.id,
-                  button: event.button,
-                  pointerType: event.pointerType,
-                  clientX: event.clientX,
-                  clientY: event.clientY,
-                });
                 if (event.pointerType === "mouse") {
                   if (event.button !== 2) return;
                   event.preventDefault();
@@ -234,6 +200,8 @@ export default function MessageList({
                 <p className="deleted-text">
                   Не удалось расшифровать сообщение на этом устройстве.
                 </p>
+              ) : isEncryptedMessagePending(message) ? (
+                <p className="deleted-text">Расшифровываем сообщение...</p>
               ) : (
                 <>
                   {message.kind === "text" && <p>{message.text}</p>}
@@ -307,19 +275,22 @@ export default function MessageList({
   );
 }
 
+function isEncryptedMessagePending(message) {
+  return Boolean(message?.encryptedPayload) && message.e2eeState !== "ready";
+}
+
 function VoiceMessage({ message }) {
   const [loaded, setLoaded] = useState(false);
+  const [audioUrl, setAudioUrl] = useState("");
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [audioTime, setAudioTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(message.durationSec || 0);
+  const audioRef = useRef(null);
   const loadedUrlRef = useRef("");
   const controls = useVoiceVisualizer({ shouldHandleBeforeUnload: false });
   const {
-    currentAudioTime,
-    isAvailableRecordedAudio,
-    isPausedRecordedAudio,
     isProcessingRecordedAudio,
     formattedDuration,
-    formattedRecordedAudioCurrentTime,
-    startAudioPlayback,
-    stopAudioPlayback,
     setPreloadedAudioBlob,
   } = controls;
   const [item] = parseAttachmentItems(message);
@@ -331,13 +302,21 @@ function VoiceMessage({ message }) {
 
     async function loadVoice() {
       setLoaded(false);
-      const response = await fetch(item.src);
+      setIsPlayingAudio(false);
+      setAudioTime(0);
+      setAudioUrl((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return "";
+      });
+      const response = await fetch(normalizeMediaUrl(item.src), { credentials: "omit" });
+      if (!response.ok) throw new Error("Failed to load voice message");
       const blob = await response.blob();
-      const preparedBlob =
-        blob.type || !item?.mimeType ? blob : new Blob([blob], { type: item.mimeType });
+      const detectedMimeType = await getVoiceMimeType(blob, item);
+      const preparedBlob = new Blob([blob], { type: detectedMimeType });
       if (cancelled) return;
       loadedUrlRef.current = item.src;
       setPreloadedAudioBlob(preparedBlob);
+      setAudioUrl(URL.createObjectURL(preparedBlob));
       setLoaded(true);
     }
 
@@ -347,40 +326,71 @@ function VoiceMessage({ message }) {
     };
   }, [item?.src, setPreloadedAudioBlob]);
 
-  const ready = loaded && isAvailableRecordedAudio && !isProcessingRecordedAudio;
-  const playing = ready && !isPausedRecordedAudio && currentAudioTime > 0;
+  useEffect(
+    () => () => {
+      if (audioUrl?.startsWith("blob:")) URL.revokeObjectURL(audioUrl);
+    },
+    [audioUrl]
+  );
+
+  const ready = loaded && Boolean(audioUrl);
+  const playing = ready && isPlayingAudio;
   const durationLabel =
-    formattedDuration || (message.durationSec ? `${message.durationSec}с` : "00:00");
-  const currentLabel = formattedRecordedAudioCurrentTime || "00:00";
+    formatAudioTime(audioDuration || message.durationSec) || formattedDuration || "00:00";
+  const currentLabel = formatAudioTime(audioTime) || "00:00";
 
   return (
-    <div className="voice-message">
+    <div className={`voice-message voice-note document ${playing ? "is-playing" : ""}`}>
+      <audio
+        ref={audioRef}
+        src={audioUrl}
+        preload="metadata"
+        onLoadedMetadata={(event) => {
+          const duration = event.currentTarget.duration;
+          if (Number.isFinite(duration)) setAudioDuration(duration);
+        }}
+        onTimeUpdate={(event) => setAudioTime(event.currentTarget.currentTime || 0)}
+        onPlay={() => setIsPlayingAudio(true)}
+        onPause={() => setIsPlayingAudio(false)}
+        onEnded={() => {
+          setIsPlayingAudio(false);
+          setAudioTime(0);
+        }}
+      />
       <button
         type="button"
         className="voice-play-button"
-        onClick={() => {
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={async (event) => {
+          event.stopPropagation();
+          const audio = audioRef.current;
+          if (!audio) return;
           if (playing) {
-            stopAudioPlayback();
+            audio.pause();
             return;
           }
-          startAudioPlayback();
+          if (audio.ended) audio.currentTime = 0;
+          audio.load();
+          await audio.play().catch(() => {
+            setIsPlayingAudio(false);
+          });
         }}
         aria-label={playing ? "Пауза" : "Воспроизвести"}
         disabled={!ready}
       >
         {playing ? <FiPause /> : <FiPlay />}
       </button>
-      <div className="voice-wave-shell">
+      <div className="voice-wave-shell voice-note-content">
         <VoiceVisualizer
           controls={controls}
-          height={54}
+          height={44}
           width="100%"
-          barWidth={3}
+          barWidth={4}
           gap={2}
           rounded={6}
           speed={2}
-          mainBarColor="var(--text)"
-          secondaryBarColor="var(--muted)"
+          mainBarColor="var(--voice-note-wave-main)"
+          secondaryBarColor="var(--voice-note-wave-secondary)"
           backgroundColor="transparent"
           isControlPanelShown={false}
           isDefaultUIShown={false}
@@ -388,13 +398,54 @@ function VoiceMessage({ message }) {
           isProgressIndicatorTimeShown={false}
           isProgressIndicatorTimeOnHoverShown={false}
         />
-        <div className="voice-time-row">
+        <div className="voice-time-row voice-note-meta">
           <span>{currentLabel}</span>
           <span>{durationLabel}</span>
         </div>
       </div>
     </div>
   );
+}
+
+async function getVoiceMimeType(blob, item) {
+  const sniffedType = await sniffMediaMimeType(blob);
+  if (sniffedType) return sniffedType;
+
+  const sourceType = blob?.type || item?.mimeType || "";
+  const name = item?.name || item?.src || "";
+
+  if (sourceType.startsWith("audio/")) return sourceType;
+  if (sourceType.includes("ogg") || name.toLowerCase().endsWith(".ogg")) return "audio/ogg";
+  if (sourceType.includes("mpeg") || name.toLowerCase().endsWith(".mp3")) return "audio/mpeg";
+  if (sourceType.includes("wav") || name.toLowerCase().endsWith(".wav")) return "audio/wav";
+  if (sourceType.includes("mp4") || name.toLowerCase().endsWith(".m4a")) return "audio/mp4";
+  return "audio/webm";
+}
+
+async function sniffMediaMimeType(blob) {
+  if (!blob?.slice) return "";
+
+  const bytes = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+  const text = String.fromCharCode(...bytes);
+
+  if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+    return "audio/webm";
+  }
+  if (text.startsWith("OggS")) return "audio/ogg";
+  if (text.startsWith("RIFF") && text.slice(8, 12) === "WAVE") return "audio/wav";
+  if (text.startsWith("ID3") || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)) {
+    return "audio/mpeg";
+  }
+  if (text.slice(4, 8) === "ftyp") return "audio/mp4";
+  return "";
+}
+
+function formatAudioTime(value) {
+  const total = Math.max(0, Math.floor(Number(value || 0)));
+  if (!Number.isFinite(total)) return "";
+  const minutes = Math.floor(total / 60).toString().padStart(2, "0");
+  const seconds = (total % 60).toString().padStart(2, "0");
+  return `${minutes}:${seconds}`;
 }
 
 function ImageMessage({ message, onOpenImage }) {

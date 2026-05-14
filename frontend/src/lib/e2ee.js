@@ -1,9 +1,13 @@
+import { normalizeMediaUrl } from "../utils/mediaUrls";
+
 const E2EE_STORAGE_PREFIX = "messenger-e2ee-keypair-v1:";
 const E2EE_DB_NAME = "messenger-e2ee";
 const E2EE_DB_VERSION = 1;
 const E2EE_STORE_NAME = "device_keys";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const KEY_EXPORT_VERSION = 1;
+const KEY_EXPORT_KDF_ITERATIONS = 250000;
 
 export async function ensureDeviceKeys(user, api) {
   const storedPair = await loadStoredKeyPair(user.id);
@@ -36,6 +40,97 @@ export async function ensureDeviceKeys(user, api) {
 
 export async function hasLocalPrivateKey(userId) {
   return Boolean(await loadStoredKeyPair(userId));
+}
+
+export async function exportDeviceKey(userId, password) {
+  const trimmedPassword = String(password || "");
+  if (trimmedPassword.length < 8) {
+    throw new Error("Пароль для экспорта должен быть не короче 8 символов.");
+  }
+
+  const stored = await loadStoredKeyPair(userId);
+  if (!stored) {
+    throw new Error("На этом устройстве нет локального E2EE ключа.");
+  }
+
+  let privateJwk = stored.privateKeyJwk;
+  if (!privateJwk && stored.privateKey instanceof CryptoKey) {
+    if (!stored.privateKey.extractable) {
+      throw new Error(
+        "Этот ключ был создан до поддержки экспорта. Импортируйте ключ на новое устройство из резервной копии или создайте новый ключ для новых чатов."
+      );
+    }
+    privateJwk = JSON.stringify(await crypto.subtle.exportKey("jwk", stored.privateKey));
+  }
+  if (!privateJwk) {
+    throw new Error("Не удалось подготовить приватный ключ к экспорту.");
+  }
+
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const wrappingKey = await deriveExportKey(trimmedPassword, salt);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    wrappingKey,
+    textEncoder.encode(JSON.stringify({
+      publicKey: stored.publicKey,
+      privateKey: privateJwk,
+    }))
+  );
+
+  return JSON.stringify({
+    version: KEY_EXPORT_VERSION,
+    app: "signal-messenger",
+    algorithm: "PBKDF2-SHA256+A256GCM",
+    iterations: KEY_EXPORT_KDF_ITERATIONS,
+    salt: arrayBufferToBase64(salt),
+    iv: arrayBufferToBase64(iv),
+    data: arrayBufferToBase64(ciphertext),
+  });
+}
+
+export async function importDeviceKey(userId, password, exportedPayload) {
+  const trimmedPassword = String(password || "");
+  if (trimmedPassword.length < 8) {
+    throw new Error("Пароль для импорта должен быть не короче 8 символов.");
+  }
+
+  let envelope;
+  try {
+    envelope = JSON.parse(exportedPayload);
+  } catch {
+    throw new Error("Некорректный формат экспортированного ключа.");
+  }
+  if (envelope?.version !== KEY_EXPORT_VERSION || !envelope?.salt || !envelope?.iv || !envelope?.data) {
+    throw new Error("Этот файл ключа не поддерживается.");
+  }
+
+  const wrappingKey = await deriveExportKey(trimmedPassword, base64ToUint8Array(envelope.salt));
+  let decrypted;
+  try {
+    decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64ToUint8Array(envelope.iv) },
+      wrappingKey,
+      base64ToArrayBuffer(envelope.data)
+    );
+  } catch {
+    throw new Error("Не удалось расшифровать ключ. Проверьте пароль.");
+  }
+
+  const payload = JSON.parse(textDecoder.decode(decrypted));
+  if (!payload?.publicKey || !payload?.privateKey) {
+    throw new Error("В экспортированном ключе нет нужных данных.");
+  }
+
+  const privateKey = await importPrivateKey(payload.privateKey);
+  await saveStoredKeyPair({
+    userId,
+    publicKey: payload.publicKey,
+    privateKey,
+    privateKeyJwk: payload.privateKey,
+  });
+
+  return { publicKey: payload.publicKey };
 }
 
 export function canEncryptForChat(chat) {
@@ -150,7 +245,7 @@ export async function decryptMessage(message, currentUserId, options = {}) {
         continue;
       }
 
-      const response = await fetch(encryptedUrl, { credentials: "include" });
+      const response = await fetch(normalizeMediaUrl(encryptedUrl), { credentials: "omit" });
       const encryptedBuffer = await response.arrayBuffer();
       const decryptedBuffer = await crypto.subtle.decrypt(
         {
@@ -269,6 +364,7 @@ async function generateAndStoreKeyPair(userId) {
     userId,
     publicKey: JSON.stringify(publicJwk),
     privateKey: hardenedPrivateKey,
+    privateKeyJwk: JSON.stringify(privateJwk),
   };
   await saveStoredKeyPair(stored);
   return stored;
@@ -307,6 +403,7 @@ async function loadStoredKeyPair(userId) {
     userId,
     publicKey: legacyRecord.publicKey,
     privateKey: await importPrivateKey(legacyRecord.privateKey),
+    privateKeyJwk: legacyRecord.privateKey,
   };
   await saveStoredKeyPair(migrated);
   window.localStorage.removeItem(getStorageKey(userId));
@@ -332,13 +429,14 @@ async function getStoredKeyPair(userId) {
         userId,
         publicKey: result.publicKey,
         privateKey: result.privateKey,
+        privateKeyJwk: result.privateKeyJwk || "",
       });
     };
     request.onerror = () => reject(request.error || new Error("Failed to read device key."));
   });
 }
 
-async function saveStoredKeyPair({ userId, publicKey, privateKey }) {
+async function saveStoredKeyPair({ userId, publicKey, privateKey, privateKeyJwk = "" }) {
   const db = await openKeyDatabase();
 
   return new Promise((resolve, reject) => {
@@ -348,6 +446,7 @@ async function saveStoredKeyPair({ userId, publicKey, privateKey }) {
       userId: String(userId),
       publicKey,
       privateKey,
+      privateKeyJwk,
     });
 
     tx.oncomplete = () => resolve();
@@ -412,6 +511,29 @@ async function importPrivateKey(serialized) {
 
 function getStorageKey(userId) {
   return `${E2EE_STORAGE_PREFIX}${userId}`;
+}
+
+async function deriveExportKey(password, salt) {
+  const passwordKey = await crypto.subtle.importKey(
+    "raw",
+    textEncoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: KEY_EXPORT_KDF_ITERATIONS,
+      hash: "SHA-256",
+    },
+    passwordKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
 }
 
 function arrayBufferToBase64(value) {

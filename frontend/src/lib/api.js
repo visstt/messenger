@@ -54,6 +54,10 @@ export const api = {
     request(`/api/chats/${chatId}/e2ee/enable`, {
       method: "POST",
     }),
+  disableChatE2EE: (chatId) =>
+    request(`/api/chats/${chatId}/e2ee/disable`, {
+      method: "POST",
+    }),
   listMessages: (chatId) => request(`/api/chats/${chatId}/messages`),
   sendTextMessage: (chatId, body) =>
     request(`/api/chats/${chatId}/messages/text`, {
@@ -90,6 +94,26 @@ export const api = {
     request(`/api/chats/${chatId}/typing`, {
       method: "POST",
       body: JSON.stringify({ typing }),
+    }),
+  createCallToken: (chatId, body) =>
+    request(`/api/chats/${chatId}/calls/token`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  inviteCall: (chatId, body) =>
+    request(`/api/chats/${chatId}/calls/invite`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  acceptCall: (chatId, body) =>
+    request(`/api/chats/${chatId}/calls/accept`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  declineCall: (chatId, body) =>
+    request(`/api/chats/${chatId}/calls/decline`, {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
   editMessage: (messageId, body) =>
     request(`/api/messages/${messageId}`, {

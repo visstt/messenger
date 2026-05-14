@@ -13,6 +13,14 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --dev --bind 0.0.0.0
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+
   backend:
     build:
       context: ./backend
@@ -22,9 +30,20 @@ services:
       JWT_SECRET: messenger-dev-secret
       APP_ORIGIN: http://localhost:3000
       UPLOAD_DIR: /app/uploads
+      S3_ENDPOINT: https://s3.ru1.storage.beget.cloud
+      S3_BUCKET_NAME: c15b4d655f70-medvito-data
+      S3_ACCESS_KEY: I6I3KOJ2YO3TN08TDJAI
+      S3_SECRET_KEY: 5up6F9kLNHRGmPIczdqAVZgBNgKhFpAGJ1JnCJUY
+      S3_REGION: ru1
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_PUBLIC_URL: ws://localhost:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: secret
     depends_on:
       postgres:
         condition: service_healthy
+      livekit:
+        condition: service_started
     volumes:
       - uploads-data:/app/uploads
     ports:

@@ -1,6 +1,5 @@
-import { MediaPlayer, MediaProvider, PlayButton } from "@vidstack/react";
+import { useRef, useState } from "react";
 import { FiPlay } from "react-icons/fi";
-import "@vidstack/react/player/styles/base.css";
 
 export default function VideoCircle({
   src,
@@ -10,40 +9,51 @@ export default function VideoCircle({
   size = "180px",
   showPlayOverlay = true,
 }) {
+  const videoRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+
+  async function togglePlayback() {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (!video.paused) {
+      video.pause();
+      return;
+    }
+    await video.play().catch(() => null);
+  }
+
   return (
     <div
       className={`video-circle-shell ${className}`.trim()}
       style={{ "--video-circle-size": size }}
     >
-      <MediaPlayer
-        src={normalizeSource(src, mimeType)}
+      <video
+        ref={videoRef}
+        className="video-circle-native"
+        src={src}
         title={title || "Video note"}
         playsInline
-        className="video-circle-player"
-      >
-        <MediaProvider className="video-circle-provider" />
-        {showPlayOverlay && (
-          <div className="video-circle-overlay">
-            <PlayButton className="video-circle-play">
-              <FiPlay />
-            </PlayButton>
-          </div>
-        )}
-      </MediaPlayer>
+        preload="metadata"
+        type={mimeType || guessMimeType(src)}
+        onClick={togglePlayback}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+      />
+      {showPlayOverlay && (
+        <div className={`video-circle-overlay ${playing ? "is-playing" : ""}`}>
+          <button type="button" className="video-circle-play" onClick={togglePlayback} aria-label="Воспроизвести">
+            <FiPlay />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-function normalizeSource(src, mimeType) {
-  if (!src) return "";
-
-  return {
-    src,
-    type: mimeType || guessMimeType(src),
-  };
-}
-
 function guessMimeType(src) {
+  if (!src) return "video/mp4";
   const clean = src.split("?")[0].toLowerCase();
 
   if (clean.endsWith(".webm")) return "video/webm";

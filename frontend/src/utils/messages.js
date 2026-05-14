@@ -1,8 +1,11 @@
+import { normalizeMediaUrl } from "./mediaUrls";
+
 export function renderPreview(message) {
   if (!message) return "Сообщений пока нет";
   if (message.deletedAt) return "Сообщение удалено";
   if (message.kind === "system") return message.text || "Системное сообщение";
   if (message.e2eeState === "locked") return "Зашифрованное сообщение";
+  if (message.encryptedPayload && message.e2eeState !== "ready") return "Расшифровываем сообщение...";
   if (message.kind === "image") {
     const items = parseImageItems(message);
     if (message.text) return message.text;
@@ -34,10 +37,12 @@ export function formatClock(value) {
 }
 
 export function parseImageItems(message) {
+  if (message?.encryptedPayload && message.e2eeState !== "ready") return [];
+
   const attachments = message?.decryptedAttachments;
   if (Array.isArray(attachments) && attachments.length > 0) {
     return attachments.map((item, index) => ({
-      src: item.src,
+      src: normalizeMediaUrl(item.src),
       alt: item.name || `Фото ${index + 1}`,
     }));
   }
@@ -45,16 +50,18 @@ export function parseImageItems(message) {
   const urls = parseMaybeArray(message.fileUrl);
   const names = parseMaybeArray(message.fileName);
   return urls.map((src, index) => ({
-    src,
+    src: normalizeMediaUrl(src),
     alt: names[index] || `Фото ${index + 1}`,
   }));
 }
 
 export function parseAttachmentItems(message) {
+  if (message?.encryptedPayload && message.e2eeState !== "ready") return [];
+
   const attachments = message?.decryptedAttachments;
   if (Array.isArray(attachments) && attachments.length > 0) {
     return attachments.map((item) => ({
-      src: item.src,
+      src: normalizeMediaUrl(item.src),
       name: item.name || "Файл",
       extension: extensionFromName(item.name),
       mimeType: item.mimeType || guessMimeTypeFromName(item.name),
@@ -66,7 +73,7 @@ export function parseAttachmentItems(message) {
   return urls.map((src, index) => {
     const name = names[index] || src.split("/").pop() || "Файл";
     return {
-      src,
+      src: normalizeMediaUrl(src),
       name,
       extension: extensionFromName(name),
       mimeType: guessMimeTypeFromName(name),
