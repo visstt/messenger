@@ -166,32 +166,25 @@ export default function App() {
       if (frame) window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         const viewport = window.visualViewport;
-        const activeElement = document.activeElement;
-        const isTypingField =
-          activeElement &&
-          (activeElement.tagName === "INPUT" ||
-            activeElement.tagName === "TEXTAREA" ||
-            activeElement.isContentEditable);
-        const keyboardDelta = viewport ? window.innerHeight - viewport.height : 0;
-        const keyboardLikelyOpen = isTypingField && keyboardDelta > 140;
-
-        // Keep app height stable while keyboard is open so composer stays at bottom.
-        if (keyboardLikelyOpen) return;
-
-        applyHeight(window.innerHeight);
+        const nextHeight = viewport
+          ? viewport.height + viewport.offsetTop
+          : window.innerHeight;
+        applyHeight(nextHeight);
       });
     }
 
-    applyHeight(window.innerHeight);
+    syncViewportHeight();
     window.addEventListener("resize", syncViewportHeight);
     window.addEventListener("orientationchange", syncViewportHeight);
     window.visualViewport?.addEventListener("resize", syncViewportHeight);
+    window.visualViewport?.addEventListener("scroll", syncViewportHeight);
 
     return () => {
       if (frame) window.cancelAnimationFrame(frame);
       window.removeEventListener("resize", syncViewportHeight);
       window.removeEventListener("orientationchange", syncViewportHeight);
       window.visualViewport?.removeEventListener("resize", syncViewportHeight);
+      window.visualViewport?.removeEventListener("scroll", syncViewportHeight);
       root.style.removeProperty("--app-height");
     };
   }, []);
