@@ -3588,11 +3588,22 @@ button {
 
 .image-viewer-panel {
   position: relative;
-  display: inline-block;
+  display: grid;
+  place-items: center;
   max-width: calc(100vw - 32px);
   max-height: calc(var(--app-height, 100dvh) - 32px);
-  overflow: auto;
+  overflow: hidden;
+  touch-action: pan-y;
   cursor: default;
+}
+
+.image-viewer-scroll {
+  max-width: 100%;
+  max-height: calc(var(--app-height, 100dvh) - 32px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .image-viewer-close {
@@ -4223,6 +4234,14 @@ button {
     max-width: 100%;
     max-height: none;
     padding: max(52px, env(safe-area-inset-top)) 4px calc(8px + env(safe-area-inset-bottom));
+    overflow: hidden;
+  }
+
+  .image-viewer-scroll {
+    width: 100%;
+    max-height: calc(
+      var(--app-height, 100dvh) - max(56px, env(safe-area-inset-top, 0px)) - max(12px, env(safe-area-inset-bottom, 0px))
+    );
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }

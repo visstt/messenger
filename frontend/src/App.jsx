@@ -80,6 +80,12 @@ export default function App() {
   const decryptedCacheRef = useRef(new Map());
 
   const handleMobileBack = useCallback(() => {
+    // Fully clear mobile chat focus, otherwise background refresh can reopen it.
+    activeChatIdRef.current = null;
+    setActiveChat(null);
+    setMessages([]);
+    setReplyDraft(null);
+    setForwardDraft(null);
     setMobileScreen("sidebar");
   }, []);
 
