@@ -3581,13 +3581,17 @@ button {
     max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   cursor: pointer;
   z-index: 120;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .image-viewer-panel {
   position: relative;
   display: inline-block;
   max-width: calc(100vw - 32px);
-  max-height: calc(100dvh - 32px);
+  max-height: calc(var(--app-height, 100dvh) - 32px);
+  overflow: auto;
   cursor: default;
 }
 
@@ -4215,7 +4219,22 @@ button {
   }
 
   .image-viewer-panel {
-    padding: 0 4px calc(8px + env(safe-area-inset-bottom));
+    width: 100%;
+    max-width: 100%;
+    max-height: none;
+    padding: max(52px, env(safe-area-inset-top)) 4px calc(8px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .image-viewer-backdrop {
+    align-items: flex-start;
+  }
+
+  .image-viewer-media {
+    max-height: none;
+    width: 100%;
+    height: auto;
   }
 }
 
