@@ -27,7 +27,12 @@ export default function ImageViewerModal({ viewer, onClose, onPrev, onNext }) {
           <FiX />
         </button>
         <div className="image-viewer-scroll">
-          <img src={currentItem?.src} alt={currentItem?.alt} className="image-viewer-media" />
+          <img
+            src={currentItem?.src}
+            alt={currentItem?.alt}
+            className="image-viewer-media"
+            draggable={false}
+          />
         </div>
         {viewer.items.length > 1 && (
           <>

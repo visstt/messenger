@@ -3599,10 +3599,11 @@ button {
 
 .image-viewer-scroll {
   max-width: 100%;
-  max-height: calc(var(--app-height, 100dvh) - 32px);
-  overflow: auto;
+  height: min(calc(var(--app-height, 100dvh) - 32px), calc(100dvh - 32px));
+  overflow-y: scroll;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
   touch-action: pan-y;
 }
 
@@ -3676,6 +3677,9 @@ button {
   border-radius: 24px;
   object-fit: contain;
   background: var(--bg);
+  -webkit-user-drag: none;
+  user-select: none;
+  pointer-events: none;
 }
 
 .theme-toggle {
@@ -4239,7 +4243,7 @@ button {
 
   .image-viewer-scroll {
     width: 100%;
-    max-height: calc(
+    height: calc(
       var(--app-height, 100dvh) - max(56px, env(safe-area-inset-top, 0px)) - max(12px, env(safe-area-inset-bottom, 0px))
     );
     overflow-y: auto;
