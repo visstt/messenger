@@ -74,18 +74,17 @@ export default function App() {
   const [loadingChatId, setLoadingChatId] = useState(null);
   const socketRef = useRef(null);
   const activeChatIdRef = useRef(null);
+  const manualMobileExitRef = useRef(false);
   const activeCallRef = useRef(null);
   const incomingCallRef = useRef(null);
   const chatsRef = useRef([]);
   const decryptedCacheRef = useRef(new Map());
 
   const handleMobileBack = useCallback(() => {
-    // Fully clear mobile chat focus, otherwise background refresh can reopen it.
+    // Keep current chat state for instant return, but block auto-reopen on mobile.
+    manualMobileExitRef.current = true;
     activeChatIdRef.current = null;
-    setActiveChat(null);
-    setMessages([]);
     setReplyDraft(null);
-    setForwardDraft(null);
     setMobileScreen("sidebar");
   }, []);
 
@@ -190,6 +189,10 @@ export default function App() {
     const handleChange = (event) => {
       setIsMobile(event.matches);
       if (!event.matches) {
+        manualMobileExitRef.current = false;
+        if (activeChat?.id) {
+          activeChatIdRef.current = Number(activeChat.id);
+        }
         setMobileScreen("sidebar");
       } else if (!activeChat) {
         setMobileScreen("sidebar");
@@ -325,15 +328,18 @@ export default function App() {
     const refresh = async () => {
       if (document.visibilityState === "hidden") return;
       try {
-        if (activeChatIdRef.current) {
-          await fetchChats(activeChatIdRef.current, { syncActive: true });
-          await openChat(activeChatIdRef.current, {
+        const canAutoReopen = !(isMobile && manualMobileExitRef.current);
+        const chatIdForRefresh = activeChatIdRef.current;
+
+        if (chatIdForRefresh && canAutoReopen) {
+          await fetchChats(chatIdForRefresh, { syncActive: true });
+          await openChat(chatIdForRefresh, {
             markRead: false,
             forceScroll: false,
             silent: true,
           });
         } else {
-          await fetchChats(activeChatIdRef.current, { syncActive: false });
+          await fetchChats(chatIdForRefresh, { syncActive: false });
         }
       } catch {
         return null;
@@ -348,7 +354,7 @@ export default function App() {
       window.clearInterval(interval);
       window.removeEventListener("focus", refresh);
     };
-  }, [currentUser]);
+  }, [currentUser, isMobile]);
 
   useEffect(() => {
     if (!searchOpen || searchQuery.trim().length < 1) {
@@ -505,6 +511,7 @@ export default function App() {
     const { markRead = true, forceScroll = false, silent = false } = options;
     if (!chatId) return;
 
+    manualMobileExitRef.current = false;
     activeChatIdRef.current = Number(chatId);
     if (!silent) {
       setLoadingChatId(chatId);
