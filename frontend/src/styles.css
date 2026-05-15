@@ -729,6 +729,11 @@ button {
   background-size: 72px 72px;
 }
 
+/* Desktop: wrapper is transparent to the parent grid; mobile: flex column (see @media). */
+.tg-chat-stack {
+  display: contents;
+}
+
 .tg-stage {
   height: 100%;
   display: grid;
@@ -761,10 +766,12 @@ button {
   html,
   body {
     height: 100%;
+    overflow: hidden;
   }
 
   #root {
-    min-height: 100dvh;
+    height: 100%;
+    min-height: 0;
     display: flex;
     flex-direction: column;
   }
@@ -772,12 +779,11 @@ button {
   .tg-app {
     flex: 1 1 auto;
     min-height: 0;
-    height: 100dvh;
-    max-height: 100dvh;
+    height: 100svh;
+    max-height: 100svh;
     align-items: stretch;
   }
 
-  /* Flex column is more reliable than grid + sticky on iOS Safari (header clip, composer gap). */
   .tg-chat-area {
     display: flex;
     flex-direction: column;
@@ -787,39 +793,116 @@ button {
     overflow: hidden;
   }
 
-  .tg-chat-area > .chat-header {
+  .tg-chat-area--mobile-open {
+    width: 100%;
+  }
+
+  .tg-chat-stack {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    touch-action: pan-y;
+    will-change: transform;
+  }
+
+  .tg-chat-stack .chat-header {
     position: relative;
     top: auto;
     flex: 0 0 auto;
-    z-index: 10;
+    z-index: 20;
+    min-height: calc(52px + env(safe-area-inset-top, 0px));
+    padding: max(6px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) 8px
+      max(10px, env(safe-area-inset-left, 0px));
     background: var(--tg-panel-bg);
     border-bottom: 1px solid var(--line);
+    color: var(--text);
   }
 
-  .tg-chat-area > .message-list,
+  .tg-chat-stack .chat-header-shell {
+    min-height: 44px;
+  }
+
+  .tg-chat-stack .chat-header-main {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .tg-chat-stack .chat-header-trigger {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--text);
+  }
+
+  .tg-chat-stack .chat-title-block h3 {
+    color: var(--text);
+  }
+
+  .tg-chat-stack .chat-back-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: var(--accent);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .tg-chat-stack .chat-back-button svg {
+    width: 1.5rem;
+    height: 1.5rem;
+    flex-shrink: 0;
+  }
+
+  .tg-chat-stack .message-list {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tg-chat-stack .composer {
+    flex: 0 0 auto;
+    width: 100%;
+    margin-bottom: 0;
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  }
+
   .tg-chat-area > .tg-stage {
     flex: 1 1 0;
     min-height: 0;
     overflow: auto;
   }
 
-  .tg-chat-area > .composer {
-    flex: 0 0 auto;
-    width: 100%;
-  }
-
   .tg-sidebar {
     width: 100%;
     max-width: none;
     min-width: 0;
-    height: 100dvh;
-    max-height: 100dvh;
+    height: 100svh;
+    max-height: 100svh;
     border-right: 0;
   }
 
   .tg-sidebar__top {
     padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 8px
       max(10px, env(safe-area-inset-left));
+  }
+
+  .tg-sidebar__top-actions {
+    gap: 4px;
+  }
+
+  .tg-sidebar__top-actions .tg-icon-btn {
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    min-height: 48px;
+    border-radius: 12px;
+  }
+
+  .tg-sidebar__top-actions .tg-icon-btn svg {
+    width: 24px;
+    height: 24px;
   }
 
   .tg-sidebar__me {
@@ -1237,7 +1320,7 @@ button {
 }
 
 @media (min-width: 961px) {
-  .chat-back-button--narrow-only {
+  .chat-back-button {
     display: none !important;
   }
 }
@@ -3664,14 +3747,14 @@ button {
       var(--page-bg);
   }
 
-  .chat-header {
-    padding: max(8px, env(safe-area-inset-top)) 8px 8px;
-    min-height: 58px;
+  .tg-chat-stack .chat-header {
+    padding: max(6px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) 8px
+      max(10px, env(safe-area-inset-left, 0px));
+    min-height: calc(52px + env(safe-area-inset-top, 0px));
     background: var(--tg-panel-bg);
-    backdrop-filter: blur(18px);
-    position: sticky;
-    top: 0;
-    z-index: 25;
+    position: relative;
+    top: auto;
+    z-index: 20;
     color: var(--text);
   }
 
@@ -3822,11 +3905,11 @@ button {
     height: 44px;
   }
 
-  .composer {
+  .tg-chat-stack .composer {
     gap: 10px;
-    padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
-    background: color-mix(in srgb, var(--bg-soft) 95%, transparent);
-    backdrop-filter: blur(18px);
+    padding: 10px 12px max(10px, env(safe-area-inset-bottom, 0px));
+    background: var(--tg-panel-bg);
+    border-top: 1px solid var(--line);
   }
 
   .composer-row {

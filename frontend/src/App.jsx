@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AuthScreen from "./components/AuthScreen";
 import ChatHeader from "./components/ChatHeader";
 import CallOverlay from "./components/CallOverlay";
@@ -28,6 +28,7 @@ import {
 import { getChatTitle } from "./utils/chats";
 import { parseAttachmentItems, parseImageItems, renderPreview } from "./utils/messages";
 import { normalizeMediaUrl } from "./utils/mediaUrls";
+import { useSwipeBack } from "./hooks/useSwipeBack";
 
 const emptyProfile = { name: "", username: "", bio: "", avatarUrl: "" };
 
@@ -77,6 +78,13 @@ export default function App() {
   const incomingCallRef = useRef(null);
   const chatsRef = useRef([]);
   const decryptedCacheRef = useRef(new Map());
+
+  const handleMobileBack = useCallback(() => {
+    setMobileScreen("sidebar");
+  }, []);
+
+  const mobileChatOpen = isMobile && Boolean(activeChat) && mobileScreen === "chat";
+  const swipeBackRef = useSwipeBack(mobileChatOpen, handleMobileBack);
 
   const activeTyping = activeChat ? typingState[activeChat.id] : false;
   const welcomeChat = useMemo(() => chats[0], [chats]);
@@ -930,10 +938,6 @@ export default function App() {
     });
   }
 
-  function handleMobileBack() {
-    setMobileScreen("sidebar");
-  }
-
   if (booting) {
     return <div className="boot-screen">Подготавливаем приложение...</div>;
   }
@@ -968,16 +972,22 @@ export default function App() {
         onOpenChat={(chatId) => openChat(chatId, { markRead: true, forceScroll: true })}
       />
 
-      <main className="tg-chat-area">
+      <main
+        className={`tg-chat-area${mobileChatOpen ? " tg-chat-area--mobile-open" : ""}`}
+      >
         {activeChat ? (
-          <>
+          <div
+            className="tg-chat-stack"
+            ref={swipeBackRef}
+            data-mobile-chat={mobileChatOpen ? "true" : undefined}
+          >
             <ChatHeader
               chat={activeChat}
               activeTyping={activeTyping}
               loading={loadingChatId === activeChat.id}
               onOpenProfile={() => setPeerProfileOpen(true)}
               onStartCall={startCall}
-              onBack={activeChat ? handleMobileBack : undefined}
+              onBack={isMobile ? handleMobileBack : undefined}
             />
 
             <MessageList
@@ -1014,7 +1024,7 @@ export default function App() {
                 return null;
               }}
             />
-          </>
+          </div>
         ) : (
           <div className="tg-stage">
             <p className="tg-eyebrow">Рабочее пространство готово</p>

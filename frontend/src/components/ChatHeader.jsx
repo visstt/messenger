@@ -17,11 +17,11 @@ export default function ChatHeader({
           {onBack && (
             <button
               type="button"
-              className="ghost-button chat-back-button chat-back-button--narrow-only"
+              className="ghost-button chat-back-button"
               onClick={onBack}
               aria-label="Назад к списку чатов"
             >
-              <FiChevronLeft />
+              <FiChevronLeft aria-hidden />
             </button>
           )}
 
