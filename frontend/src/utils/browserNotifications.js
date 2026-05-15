@@ -80,6 +80,8 @@ export function setUnreadTitle(count) {
   if (typeof document === "undefined") return;
   document.title = count > 0 ? `(${count}) ${DEFAULT_TITLE}` : DEFAULT_TITLE;
   setFaviconBadge(count);
+  void setAppBadge(count);
+  sendBadgeToServiceWorker(count);
 }
 
 function canUseNotifications() {
@@ -125,6 +127,30 @@ function setFaviconBadge(count) {
   ctx.fillText(count > 9 ? "9+" : String(count), 47, 18);
 
   link.href = canvas.toDataURL("image/png");
+}
+
+async function setAppBadge(count) {
+  if (typeof navigator === "undefined") return;
+
+  try {
+    if (count > 0 && "setAppBadge" in navigator) {
+      await navigator.setAppBadge(count > 99 ? 99 : count);
+      return;
+    }
+    if (count <= 0 && "clearAppBadge" in navigator) {
+      await navigator.clearAppBadge();
+    }
+  } catch {
+    // Ignore unsupported platform/runtime errors.
+  }
+}
+
+function sendBadgeToServiceWorker(count) {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.controller?.postMessage({
+    type: "badge:update",
+    count,
+  });
 }
 
 function getFaviconLink() {
