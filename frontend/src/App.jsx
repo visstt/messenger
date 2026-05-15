@@ -148,6 +148,32 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const root = document.documentElement;
+    const viewport = window.visualViewport;
+
+    function syncViewportHeight() {
+      const height = viewport?.height || window.innerHeight;
+      root.style.setProperty("--app-height", `${Math.round(height)}px`);
+    }
+
+    syncViewportHeight();
+    window.addEventListener("resize", syncViewportHeight);
+    window.addEventListener("orientationchange", syncViewportHeight);
+    viewport?.addEventListener("resize", syncViewportHeight);
+    viewport?.addEventListener("scroll", syncViewportHeight);
+
+    return () => {
+      window.removeEventListener("resize", syncViewportHeight);
+      window.removeEventListener("orientationchange", syncViewportHeight);
+      viewport?.removeEventListener("resize", syncViewportHeight);
+      viewport?.removeEventListener("scroll", syncViewportHeight);
+      root.style.removeProperty("--app-height");
+    };
+  }, []);
+
+  useEffect(() => {
     bootstrap();
   }, []);
 
