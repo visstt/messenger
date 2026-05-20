@@ -12,6 +12,7 @@ import EditMessageModal from "./components/modals/EditMessageModal";
 import PeerProfileModal from "./components/modals/PeerProfileModal";
 import ProfileEditorModal from "./components/modals/ProfileEditorModal";
 import ProfileModal from "./components/modals/ProfileModal";
+import SettingsModal from "./components/modals/SettingsModal";
 import GroupChatModal from "./components/modals/GroupChatModal";
 import SearchModal from "./components/modals/SearchModal";
 import ForwardMessageModal from "./components/modals/ForwardMessageModal";
@@ -67,6 +68,7 @@ export default function App() {
   const [groupAvatarFile, setGroupAvatarFile] = useState(null);
   const [typingState, setTypingState] = useState({});
   const [profileOpen, setProfileOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [peerProfileOpen, setPeerProfileOpen] = useState(false);
   const [peerProfileUser, setPeerProfileUser] = useState(null);
@@ -253,8 +255,12 @@ export default function App() {
               api.markRead(eventChatId).catch(() => null);
             }
           }
-          if (isIncomingMessage && shouldNotifyWhenMessageArrives()) {
-            notifyIncomingMessage(message, eventChatId);
+          if (isIncomingMessage) {
+            shouldNotifyWhenMessageArrives()
+              .then((shouldNotify) => {
+                if (shouldNotify) notifyIncomingMessage(message, eventChatId);
+              })
+              .catch(() => null);
           }
           fetchChats(activeId, { syncActive: Boolean(activeId) }).catch(() => null);
         }
@@ -641,6 +647,7 @@ export default function App() {
     setActiveChat(null);
     setError("");
     setProfileOpen(false);
+    setSettingsOpen(false);
     setProfileEditorOpen(false);
     setPeerProfileOpen(false);
     setPeerProfileUser(null);
@@ -1104,6 +1111,7 @@ export default function App() {
       title,
       body,
       tag: `signal-chat-${chatId}`,
+      chatId,
       onClick: () => {
         setUnreadNotificationCount(0);
         openChat(chatId, { markRead: true, forceScroll: true }).catch(() => null);
@@ -1251,14 +1259,23 @@ export default function App() {
       <ProfileModal
         open={profileOpen}
         user={currentUser}
-        theme={theme}
         onClose={() => setProfileOpen(false)}
-        onToggleTheme={() => setTheme((prev) => (prev === "light" ? "dark" : "light"))}
         onLogout={handleLogout}
         onEdit={() => {
           setProfileOpen(false);
           setProfileEditorOpen(true);
         }}
+        onOpenSettings={() => {
+          setProfileOpen(false);
+          setSettingsOpen(true);
+        }}
+      />
+
+      <SettingsModal
+        open={settingsOpen}
+        theme={theme}
+        onClose={() => setSettingsOpen(false)}
+        onToggleTheme={() => setTheme((prev) => (prev === "light" ? "dark" : "light"))}
       />
 
       <ProfileEditorModal

@@ -3892,6 +3892,125 @@ button {
   white-space: nowrap;
 }
 
+.tg-settings {
+  width: min(100%, 480px);
+}
+
+.tg-settings__section {
+  display: grid;
+  gap: 10px;
+}
+
+.tg-settings__section + .tg-settings__section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.tg-settings__section-title {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tg-settings__theme {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--input-bg) 70%, var(--tg-panel-bg));
+}
+
+.tg-settings__theme-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.tg-settings__theme-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.tg-settings__theme-btn.active {
+  background: var(--tg-panel-bg);
+  color: var(--text);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
+.tg-settings__desktop-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px 12px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent),
+    color-mix(in srgb, var(--input-bg) 60%, var(--tg-panel-bg));
+}
+
+.tg-settings__desktop-icon img {
+  display: block;
+  border-radius: 12px;
+}
+
+.tg-settings__desktop-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tg-settings__desktop-copy strong {
+  color: var(--text);
+  font-size: 0.98rem;
+}
+
+.tg-settings__desktop-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.tg-settings__download-btn {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+  transition: filter 120ms ease;
+}
+
+.tg-settings__download-btn:hover {
+  filter: brightness(1.05);
+}
+
+.tg-settings__footer {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .modal-search {
   margin: 16px 0;
 }

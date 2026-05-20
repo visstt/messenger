@@ -3,10 +3,8 @@ import {
   FiEdit3,
   FiLogOut,
   FiMail,
-  FiMoon,
   FiPhone,
   FiSettings,
-  FiSun,
   FiUser,
 } from "react-icons/fi";
 import Avatar from "../Avatar";
@@ -15,11 +13,10 @@ import { Button, IconButton, Modal } from "../../ui";
 export default function ProfileModal({
   open,
   user,
-  theme,
   onClose,
-  onToggleTheme,
   onLogout,
   onEdit,
+  onOpenSettings,
 }) {
   if (!open || !user) return null;
 
@@ -39,7 +36,12 @@ export default function ProfileModal({
             {user.bio || "Добавьте короткое описание, чтобы профиль выглядел живее."}
           </div>
         </div>
-        <IconButton aria-label="Настройки" title="Настройки" variant="ghost">
+        <IconButton
+          aria-label="Настройки"
+          title="Настройки"
+          variant="ghost"
+          onClick={onOpenSettings}
+        >
           <FiSettings />
         </IconButton>
       </div>
@@ -48,8 +50,8 @@ export default function ProfileModal({
         <Button variant="primary" onClick={onEdit}>
           Редактировать
         </Button>
-        <Button variant="ghost" onClick={onToggleTheme}>
-          {theme === "light" ? "Тёмная тема" : "Светлая тема"}
+        <Button variant="ghost" onClick={onOpenSettings}>
+          Настройки
         </Button>
       </div>
 

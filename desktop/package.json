@@ -1,0 +1,66 @@
+{
+  "name": "messenger-desktop",
+  "version": "1.0.0",
+  "description": "Desktop client for Signal messenger",
+  "main": "electron/main.js",
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "npm run icons && electron-builder --win",
+    "dist:prod": "cross-env MESSENGER_URL=https://chat.5-35-88-205.sslip.io npm run dist",
+    "dist:unsigned": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win",
+    "icons": "node scripts/generate-icons.mjs",
+    "publish-installer": "node scripts/publish-installer.mjs"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "rcedit": "^4.0.1",
+    "sharp": "^0.33.5",
+    "to-ico": "^1.1.5"
+  },
+  "build": {
+    "appId": "com.messenger.signal.desktop",
+    "productName": "Signal",
+    "icon": "assets/icon.ico",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "afterPack": "scripts/after-pack.cjs",
+    "forceCodeSigning": false,
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Signal",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico"
+    }
+  }
+}

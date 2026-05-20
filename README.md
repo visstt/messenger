@@ -1,75 +1,68 @@
-# MVP мессенджера
+# Signal Messenger
 
-Это MVP мессенджера на `React + Go + Postgres`, собранное по [Messenger_Mvp_Technical_Spec.md](./Messenger_Mvp_Technical_Spec.md) и UX-ориентирам из [telegram_screens_detailed.md](./telegram_screens_detailed.md).
+Веб-мессенджер + desktop (Electron). Продакшен: [https://chat.5-35-88-205.sslip.io](https://chat.5-35-88-205.sslip.io/)
 
-## Что реализовано
-
-- регистрация и вход;
-- профиль пользователя;
-- поиск пользователей;
-- личные чаты 1 на 1;
-- текстовые сообщения;
-- отправка изображений;
-- отправка голосовых сообщений;
-- базовые realtime-события через WebSocket;
-- отметка прочтения сообщений;
-- редактирование и удаление своих текстовых сообщений;
-- запуск через `docker compose` одной командой.
-
-## Технологический стек
-
-- frontend: React + Vite + Nginx;
-- backend: Go + Chi + WebSocket;
-- база данных: PostgreSQL.
-
-## Запуск
+## Локально (разработка)
 
 ```bash
 docker compose up --build
 ```
 
-После запуска будут доступны:
+Сайт: http://localhost:3020
 
-- приложение: `http://localhost:3020`;
-- healthcheck backend: `http://localhost:9080/healthz`.
+## Деплой на VPS (обновление одной командой)
 
-## HTTPS, камера и микрофон
-
-Браузеры открывают `getUserMedia` (камера, микрофон, видеокружки) только в **безопасном контексте**: **HTTPS** или `localhost`. Если открыть приложение по `http://IP-сервера/`, `navigator.mediaDevices` может быть недоступен — запрос разрешения не появится.
-
-На сервере обычно делают **nginx на хосте** с TLS (Let’s Encrypt / **certbot**) и проксируют на контейнер (`3020` для фронта). Для **звонков LiveKit** с HTTPS-страницы нужен **`wss://`** (часто отдельный поддомен с тем же или SAN-сертификатом). Пример конфига и шаги: [`deploy/host-nginx-messenger.example.conf`](./deploy/host-nginx-messenger.example.conf).
-
-В `location /` у этого nginx **обязательно** нужны заголовки WebSocket: `Upgrade`, `Connection` (см. пример в репозитории). Без них браузер не поднимет `wss://…/ws`, событие входящего звонка не придёт, а обычные HTTP-запросы (`/api/…`) могут работать.
-
-Переменные для продакшена (скопируйте [`.env.example`](./.env.example) в `.env` и подставьте домены):
-
-- `APP_ORIGIN` — точный URL приложения в браузере, например `https://chat.example.com`;
-- `LIVEKIT_PUBLIC_URL` — URL для клиента LiveKit, например `wss://livekit.example.com` (должен совпадать с тем, что отдаёт бэкенд в токене звонка).
-
-Кратко по certbot (Debian/Ubuntu), когда nginx уже смотрит на ваш домен и проксирует на `127.0.0.1:3020`:
+На сервере (Ubuntu/Debian), в каталоге проекта:
 
 ```bash
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d chat.example.com -d livekit.example.com
+chmod +x deploy/update.sh
+bash deploy/update.sh
 ```
 
-Дальше `sudo nginx -t && sudo systemctl reload nginx`. Продление: `sudo certbot renew` (часто уже в cron).
+Скрипт:
 
-## Демо-аккаунты
+1. Копирует `deploy/env.production` → `.env` (домен, LiveKit, IP ICE)
+2. Делает `git pull` (если репозиторий под git)
+3. Собирает и перезапускает `docker compose`
+4. Подключает nginx-конфиг `deploy/nginx-messenger-sslip-full.conf` и перезагружает nginx
 
-- `alice / alice12345`;
-- `bob / bob12345`.
+### Первый запуск на чистом сервере
 
-## Структура проекта
+```bash
+# Docker
+sudo apt update && sudo apt install -y docker.io docker-compose-plugin git nginx certbot python3-certbot-nginx
 
-- [frontend](./frontend)
-- [backend](./backend)
-- [Messenger_Mvp_Technical_Spec.md](./Messenger_Mvp_Technical_Spec.md)
-- [telegram_screens_detailed.md](./telegram_screens_detailed.md)
+# Клон / обновление проекта
+cd /path/to/messenger
+bash deploy/update.sh
 
-## Ограничения текущей версии
+# SSL (один раз), если сертификата ещё нет:
+sudo certbot --nginx -d chat.5-35-88-205.sslip.io -d livekit.5-35-88-205.sslip.io
+bash deploy/update.sh
+```
 
-- вместо полной модели доставки сообщений используется упрощённый статус `sent/read`;
-- нет групп, каналов, push-уведомлений и сквозного шифрования;
-- вложения хранятся локально в Docker volume;
-- интерфейс покрывает MVP-срез, а не весь объём Telegram-подобного продукта.
+Порты compose: frontend **3020**, backend **9080**, LiveKit **7880** (проксируются nginx).
+
+### Кнопка «Скачать для ПК»
+
+Установщик собирается **на Windows**, затем снова деплой:
+
+```powershell
+# в репозитории на ПК
+powershell -ExecutionPolicy Bypass -File deploy/build-desktop.ps1
+# залить frontend/public/downloads/Signal-Desktop-Setup.exe на сервер (git/rsync)
+bash deploy/update.sh
+```
+
+Установленный desktop по умолчанию открывает `https://chat.5-35-88-205.sslip.io`.
+
+## Конфигурация
+
+| Файл | Назначение |
+|------|------------|
+| `deploy/env.production` | URL для Docker на VPS |
+| `deploy/nginx-messenger-sslip-full.conf` | HTTPS + прокси chat/livekit |
+| `deploy/update.sh` | Автообновление на сервере |
+| `deploy/build-desktop.ps1` | Сборка exe с прод-URL |
+
+Подробнее про desktop: [desktop/README.md](desktop/README.md)

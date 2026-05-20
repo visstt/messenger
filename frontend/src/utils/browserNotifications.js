@@ -31,7 +31,32 @@ export async function requestNotificationPermission() {
   }
 }
 
-export async function showMessageNotification({ title, body, tag, onClick }) {
+function getDesktopApi() {
+  if (typeof window === "undefined") return null;
+  return window.messengerDesktop?.isDesktop ? window.messengerDesktop : null;
+}
+
+export async function showMessageNotification({ title, body, tag, onClick, chatId }) {
+  const desktop = getDesktopApi();
+  if (desktop) {
+    const resolvedChatId =
+      chatId ?? (tag && /signal-chat-(\d+)/.exec(tag)?.[1]
+        ? Number(/signal-chat-(\d+)/.exec(tag)[1])
+        : null);
+
+    desktop.showMessageNotification({
+      title,
+      body,
+      tag,
+      chatId: resolvedChatId,
+    });
+
+    if (resolvedChatId && typeof onClick === "function") {
+      registerDesktopNotificationClick(resolvedChatId, onClick);
+    }
+    return null;
+  }
+
   if (!canUseNotifications() || Notification.permission !== "granted") return null;
 
   const options = {
@@ -71,9 +96,35 @@ export async function showMessageNotification({ title, body, tag, onClick }) {
   return notification;
 }
 
-export function shouldNotifyWhenMessageArrives() {
+export async function shouldNotifyWhenMessageArrives() {
+  const desktop = getDesktopApi();
+  if (desktop?.shouldNotify) {
+    try {
+      return await desktop.shouldNotify();
+    } catch {
+      return true;
+    }
+  }
   if (typeof document === "undefined") return false;
   return document.visibilityState !== "visible" || !document.hasFocus();
+}
+
+const desktopClickHandlers = new Map();
+let desktopClickListenerReady = false;
+
+function registerDesktopNotificationClick(chatId, onClick) {
+  if (!chatId || typeof onClick !== "function") return;
+  desktopClickHandlers.set(Number(chatId), onClick);
+
+  if (desktopClickListenerReady) return;
+  const desktop = getDesktopApi();
+  if (!desktop?.onNotificationClick) return;
+
+  desktop.onNotificationClick((clickedChatId) => {
+    const handler = desktopClickHandlers.get(Number(clickedChatId));
+    handler?.();
+  });
+  desktopClickListenerReady = true;
 }
 
 export function setUnreadTitle(count) {
