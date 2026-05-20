@@ -29,6 +29,13 @@ import { getChatTitle } from "./utils/chats";
 import { parseAttachmentItems, parseImageItems, renderPreview } from "./utils/messages";
 import { normalizeMediaUrl } from "./utils/mediaUrls";
 import { useSwipeBack } from "./hooks/useSwipeBack";
+import {
+  clearJoinTokenFromUrl,
+  clearPendingJoinToken,
+  getJoinTokenFromUrl,
+  readPendingJoinToken,
+  rememberJoinTokenFromUrl,
+} from "./utils/groupInvite";
 
 const emptyProfile = { name: "", username: "", phone: "", bio: "", avatarUrl: "" };
 
@@ -192,6 +199,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    rememberJoinTokenFromUrl();
     bootstrap();
   }, []);
 
@@ -432,12 +440,37 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toasts]);
 
+  async function processGroupInviteJoin(token) {
+    if (!token) return false;
+
+    try {
+      setError("");
+      const data = await api.joinGroupInvite(token);
+      clearPendingJoinToken();
+      clearJoinTokenFromUrl();
+      await fetchChats(data.chat.id);
+      await openChat(data.chat.id, { markRead: true, forceScroll: true });
+      pushToast(data.joined ? "Вы вступили в группу" : "Вы уже в этой группе");
+      return true;
+    } catch (err) {
+      setError(err.message);
+      pushToast(err.message || "Не удалось вступить в группу");
+      return false;
+    }
+  }
+
   async function bootstrap() {
     try {
       const me = await api.me();
       await establishSecureSession(me.user);
 
       const nextChats = await fetchChats();
+      const joinToken = getJoinTokenFromUrl() || readPendingJoinToken();
+      if (joinToken) {
+        await processGroupInviteJoin(joinToken);
+        return;
+      }
+
       if (!isMobile && nextChats[0]) {
         await openChat(nextChats[0].id, { markRead: true, forceScroll: true });
       }
@@ -583,6 +616,12 @@ export default function App() {
             });
 
       await establishSecureSession(payload.user);
+
+      const joinToken = getJoinTokenFromUrl() || readPendingJoinToken();
+      if (joinToken) {
+        await processGroupInviteJoin(joinToken);
+        return;
+      }
 
       const nextChats = await fetchChats();
       if (!isMobile && nextChats[0]) {
@@ -1138,6 +1177,7 @@ export default function App() {
               onTogglePin={togglePinMessage}
               onToggleReaction={toggleReaction}
               onOpenImage={openImageViewer}
+              onJoinGroupInvite={processGroupInviteJoin}
               forceScroll={Boolean(activeChat.forceScroll)}
             />
 
@@ -1245,6 +1285,7 @@ export default function App() {
         onOpenUserProfile={openUserPeerProfile}
         onStartChat={handlePeerProfileStartChat}
         onStartCall={handlePeerProfileStartCall}
+        onInviteCopied={pushToast}
       />
 
       <ImageViewerModal

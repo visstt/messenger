@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -185,6 +187,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS public_key TEXT NOT NULL DEFAULT '';
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS encrypted_payload TEXT NOT NULL DEFAULT '';
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS encryption_meta TEXT NOT NULL DEFAULT '';
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS invite_token TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_invite_token ON chats(invite_token) WHERE invite_token <> '';
 `
 	_, err := s.db.Exec(ctx, schema)
 	return err
@@ -535,10 +539,15 @@ func (s *Store) CreateGroupChat(ctx context.Context, currentUserID int64, title 
 	}
 	defer tx.Rollback(ctx)
 
+	inviteToken, err := newInviteToken()
+	if err != nil {
+		return ChatDetails{}, err
+	}
+
 	var chatID int64
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO chats (kind, title) VALUES ('group', $1) RETURNING id
-	`, title).Scan(&chatID); err != nil {
+		INSERT INTO chats (kind, title, invite_token) VALUES ('group', $1, $2) RETURNING id
+	`, title, inviteToken).Scan(&chatID); err != nil {
 		return ChatDetails{}, err
 	}
 
@@ -576,6 +585,155 @@ func (s *Store) UpdateChatAvatar(ctx context.Context, currentUserID, chatID int6
 	}
 
 	return s.GetChatDetails(ctx, currentUserID, updatedID)
+}
+
+func newInviteToken() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func (s *Store) GetOrCreateGroupInviteToken(ctx context.Context, currentUserID, chatID int64) (string, error) {
+	var kind string
+	var token string
+	err := s.db.QueryRow(ctx, `
+		SELECT c.kind, c.invite_token
+		FROM chats c
+		JOIN chat_participants cp ON cp.chat_id = c.id AND cp.user_id = $1
+		WHERE c.id = $2
+	`, currentUserID, chatID).Scan(&kind, &token)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	if kind != "group" {
+		return "", ErrForbidden
+	}
+	if strings.TrimSpace(token) != "" {
+		return token, nil
+	}
+
+	for attempt := 0; attempt < 6; attempt++ {
+		nextToken, err := newInviteToken()
+		if err != nil {
+			return "", err
+		}
+		err = s.db.QueryRow(ctx, `
+			UPDATE chats
+			SET invite_token = $3, updated_at = NOW()
+			WHERE id = $2 AND kind = 'group' AND invite_token = ''
+			RETURNING invite_token
+		`, currentUserID, chatID, nextToken).Scan(&token)
+		if err == nil {
+			return token, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", err
+		}
+		if err := s.db.QueryRow(ctx, `
+			SELECT invite_token FROM chats WHERE id = $1
+		`, chatID).Scan(&token); err == nil && strings.TrimSpace(token) != "" {
+			return token, nil
+		}
+	}
+
+	return "", fmt.Errorf("failed to create invite token")
+}
+
+func (s *Store) JoinGroupByInviteToken(ctx context.Context, currentUserID int64, token string) (ChatDetails, Message, []int64, bool, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ChatDetails{}, Message{}, nil, false, ErrNotFound
+	}
+
+	var chatID int64
+	err := s.db.QueryRow(ctx, `
+		SELECT id FROM chats WHERE invite_token = $1 AND kind = 'group'
+	`, token).Scan(&chatID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ChatDetails{}, Message{}, nil, false, ErrNotFound
+		}
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+
+	var alreadyMember bool
+	if err := s.db.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM chat_participants WHERE chat_id = $1 AND user_id = $2
+		)
+	`, chatID, currentUserID).Scan(&alreadyMember); err != nil {
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+	if alreadyMember {
+		chat, err := s.GetChatDetails(ctx, currentUserID, chatID)
+		return chat, Message{}, nil, false, err
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO chat_participants (chat_id, user_id) VALUES ($1, $2)
+	`, chatID, currentUserID); err != nil {
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+
+	joiner, err := s.GetUserByID(ctx, currentUserID)
+	if err != nil {
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+
+	var systemMessage Message
+	systemText := fmt.Sprintf("%s вступил в группу", joiner.Name)
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO messages (chat_id, sender_id, kind, text)
+		VALUES ($1, $2, 'system', $3)
+		RETURNING id, chat_id, sender_id, kind, text, file_url, file_name, duration_sec, encrypted_payload, encryption_meta, reply_to_message_id, pinned_at, edited_at, deleted_at, created_at
+	`, chatID, currentUserID, systemText).Scan(
+		&systemMessage.ID,
+		&systemMessage.ChatID,
+		&systemMessage.SenderID,
+		&systemMessage.Kind,
+		&systemMessage.Text,
+		&systemMessage.FileURL,
+		&systemMessage.FileName,
+		&systemMessage.DurationSec,
+		&systemMessage.EncryptedPayload,
+		&systemMessage.EncryptionMeta,
+		&systemMessage.ReplyToMessage,
+		&systemMessage.PinnedAt,
+		&systemMessage.EditedAt,
+		&systemMessage.DeletedAt,
+		&systemMessage.CreatedAt,
+	); err != nil {
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+	systemMessage.Sender = joiner
+	systemMessage.Status = "sent"
+
+	if _, err := tx.Exec(ctx, `UPDATE chats SET updated_at = NOW() WHERE id = $1`, chatID); err != nil {
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+
+	recipientIDs, err := s.GetRecipientIDs(ctx, currentUserID, chatID)
+	if err != nil {
+		return ChatDetails{}, Message{}, nil, false, err
+	}
+
+	chat, err := s.GetChatDetails(ctx, currentUserID, chatID)
+	return chat, systemMessage, recipientIDs, true, err
 }
 
 func (s *Store) GetChatDetails(ctx context.Context, currentUserID, chatID int64) (ChatDetails, error) {

@@ -98,6 +98,8 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 		protected.Post("/api/chats/private", s.handleCreatePrivateChat)
 		protected.Post("/api/chats/group", s.handleCreateGroupChat)
 		protected.Post("/api/chats/{chatID}/avatar", s.handleUploadChatAvatar)
+		protected.Get("/api/chats/{chatID}/invite", s.handleGetGroupInvite)
+		protected.Post("/api/invites/{token}/join", s.handleJoinGroupInvite)
 		protected.Post("/api/chats/{chatID}/e2ee/enable", s.handleEnableChatE2EE)
 		protected.Post("/api/chats/{chatID}/e2ee/disable", s.handleDisableChatE2EE)
 		protected.Get("/api/chats/{chatID}/messages", s.handleListMessages)
@@ -351,6 +353,71 @@ func (s *Server) handleCreateGroupChat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.pushChatCreatedEvent(chat, currentUserID(r.Context()))
 	writeJSON(w, http.StatusCreated, map[string]any{"chat": chat})
+}
+
+func (s *Server) handleGetGroupInvite(w http.ResponseWriter, r *http.Request) {
+	chatID := parseInt64Param(chi.URLParam(r, "chatID"))
+	if chatID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid chat id")
+		return
+	}
+
+	token, err := s.store.GetOrCreateGroupInviteToken(r.Context(), currentUserID(r.Context()), chatID)
+	if err != nil {
+		if _isStoreError(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "chat not found")
+			return
+		}
+		if _isStoreError(err, store.ErrForbidden) {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "failed to get invite link")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"inviteToken": token})
+}
+
+func (s *Server) handleJoinGroupInvite(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(chi.URLParam(r, "token"))
+	if token == "" {
+		writeError(w, http.StatusBadRequest, "invalid invite token")
+		return
+	}
+
+	chat, systemMessage, recipientIDs, joined, err := s.store.JoinGroupByInviteToken(
+		r.Context(),
+		currentUserID(r.Context()),
+		token,
+	)
+	if err != nil {
+		if _isStoreError(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "invite link not found")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "failed to join group")
+		return
+	}
+
+	if joined {
+		s.pushChatCreatedEvent(chat, currentUserID(r.Context()))
+		s.hub.BroadcastToUser(currentUserID(r.Context()), realtime.Event{
+			Type: "chat:created",
+			Data: map[string]any{
+				"chatId": chat.ID,
+				"chat":   chat,
+			},
+		})
+		if systemMessage.ID > 0 {
+			s.pushMessageEvents(systemMessage, recipientIDs, currentUserID(r.Context()))
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"chat":   chat,
+		"joined": joined,
+	})
 }
 
 func (s *Server) handleUploadChatAvatar(w http.ResponseWriter, r *http.Request) {

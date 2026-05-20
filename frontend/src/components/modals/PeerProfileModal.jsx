@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FiCamera,
+  FiCopy,
   FiDownload,
   FiFile,
   FiImage,
+  FiLink,
   FiMessageSquare,
   FiMic,
   FiPhone,
   FiVideo,
 } from "react-icons/fi";
+import { api } from "../../lib/api";
+import { buildGroupInviteUrl } from "../../utils/groupInvite";
 import Avatar from "../Avatar";
 import VideoCircle from "../VideoCircle";
 import { formatClock, parseAttachmentItems, parseImageItems } from "../../utils/messages";
@@ -34,9 +38,12 @@ export default function PeerProfileModal({
   onOpenUserProfile,
   onStartChat,
   onStartCall,
+  onInviteCopied,
 }) {
   const [activeTab, setActiveTab] = useState("photos");
   const [membersOpen, setMembersOpen] = useState(false);
+  const [inviteLink, setInviteLink] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(false);
   const uploadInputRef = useRef(null);
   const media = useMemo(() => buildMediaCollections(messages), [messages]);
   const isStandaloneUser = Boolean(user);
@@ -55,11 +62,49 @@ export default function PeerProfileModal({
     }
   }, [open, chat?.id, user?.id]);
 
+  useEffect(() => {
+    if (!open || !isGroup || !chat?.id) {
+      setInviteLink("");
+      setInviteLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setInviteLoading(true);
+
+    api
+      .getGroupInvite(chat.id)
+      .then((data) => {
+        if (cancelled) return;
+        setInviteLink(buildGroupInviteUrl(data.inviteToken));
+      })
+      .catch(() => {
+        if (!cancelled) setInviteLink("");
+      })
+      .finally(() => {
+        if (!cancelled) setInviteLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, chat?.id, isGroup]);
+
   if (!open || (!chat && !user)) return null;
 
   function handleToggleMembers() {
     if (!isGroup) return;
     setMembersOpen((prev) => !prev);
+  }
+
+  async function handleCopyInviteLink() {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      onInviteCopied?.("Ссылка приглашения скопирована");
+    } catch {
+      onInviteCopied?.("Не удалось скопировать ссылку");
+    }
   }
 
   return (
@@ -151,6 +196,34 @@ export default function PeerProfileModal({
             <strong className="tg-peer-user-fields__value">
               {displayUser?.phone || "Не указан"}
             </strong>
+          </div>
+        </div>
+      )}
+
+      {isGroup && !isStandaloneUser && (
+        <div className="tg-peer-invite" aria-label="Приглашение в группу">
+          <div className="tg-peer-invite__head">
+            <FiLink />
+            <span>Ссылка-приглашение</span>
+          </div>
+          <p className="tg-peer-invite__hint">
+            Скопируйте ссылку и отправьте в любой чат — человек сможет вступить в группу.
+          </p>
+          <div className="tg-peer-invite__row">
+            <input
+              className="tg-peer-invite__input"
+              readOnly
+              value={inviteLoading ? "Генерируем ссылку..." : inviteLink || "Ссылка недоступна"}
+            />
+            <Button
+              type="button"
+              variant="primary"
+              disabled={!inviteLink || inviteLoading}
+              onClick={handleCopyInviteLink}
+            >
+              <FiCopy />
+              <span>Копировать</span>
+            </Button>
           </div>
         </div>
       )}

@@ -14,6 +14,7 @@ import {
   FiX,
 } from "react-icons/fi";
 import VideoCircle from "./VideoCircle";
+import MessageTextContent from "./MessageTextContent";
 import { normalizeMediaUrl } from "../utils/mediaUrls";
 import {
   formatClock,
@@ -35,6 +36,7 @@ export default function MessageList({
   onTogglePin,
   onToggleReaction,
   onOpenImage,
+  onJoinGroupInvite,
   forceScroll,
 }) {
   const bottomRef = useRef(null);
@@ -218,7 +220,13 @@ export default function MessageList({
                 <p className="deleted-text">Расшифровываем сообщение...</p>
               ) : (
                 <>
-                  {message.kind === "text" && <p>{message.text}</p>}
+                  {message.kind === "text" && (
+                    <MessageTextContent
+                      text={message.text}
+                      className="message-text-content"
+                      onJoinGroupInvite={onJoinGroupInvite}
+                    />
+                  )}
                   {message.kind === "image" && (
                     <ImageMessage message={message} onOpenImage={onOpenImage} />
                   )}
@@ -227,7 +235,11 @@ export default function MessageList({
                   {message.kind === "file" && <FileMessage message={message} />}
                   {message.kind === "voice" && <VoiceMessage message={message} />}
                   {message.kind !== "text" && message.text && (
-                    <p className="media-caption">{message.text}</p>
+                    <MessageTextContent
+                      text={message.text}
+                      className="message-text-content media-caption"
+                      onJoinGroupInvite={onJoinGroupInvite}
+                    />
                   )}
                 </>
               )}

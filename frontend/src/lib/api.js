@@ -55,6 +55,11 @@ export const api = {
       method: "POST",
       body: formData,
     }),
+  getGroupInvite: (chatId) => request(`/api/chats/${chatId}/invite`),
+  joinGroupInvite: (token) =>
+    request(`/api/invites/${encodeURIComponent(token)}/join`, {
+      method: "POST",
+    }),
   enableChatE2EE: (chatId) =>
     request(`/api/chats/${chatId}/e2ee/enable`, {
       method: "POST",

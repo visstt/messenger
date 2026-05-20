@@ -1,4 +1,6 @@
 import { normalizeMediaUrl } from "./mediaUrls";
+import { isGroupInviteUrl } from "./groupInvite";
+import { splitTextWithUrls } from "./messageLinks";
 
 export function renderPreview(message) {
   if (!message) return "Сообщений пока нет";
@@ -18,7 +20,28 @@ export function renderPreview(message) {
     return message.text || item?.name || "Файл";
   }
   if (message.kind === "voice") return `Голосовое · ${message.durationSec || 0}с`;
-  return message.text || "Зашифрованное сообщение";
+  return summarizeTextPreview(message.text) || "Зашифрованное сообщение";
+}
+
+function summarizeTextPreview(text) {
+  if (!text) return "";
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+
+  const segments = splitTextWithUrls(trimmed);
+  const hasInvite = segments.some(
+    (segment) => segment.type === "url" && isGroupInviteUrl(segment.href)
+  );
+  const onlyInvite =
+    hasInvite &&
+    segments.every(
+      (segment) =>
+        segment.type === "text" ? !segment.value.trim() : isGroupInviteUrl(segment.href)
+    );
+
+  if (onlyInvite) return "Приглашение в группу";
+  if (hasInvite) return "Приглашение в группу";
+  return trimmed;
 }
 
 export function translateStatus(status) {
