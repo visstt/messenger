@@ -23,7 +23,7 @@ import {
   registerNotificationServiceWorker,
   requestNotificationPermission,
   setUnreadTitle,
-  shouldNotifyWhenMessageArrives,
+  shouldNotifyForIncomingMessage,
   showMessageNotification,
 } from "./utils/browserNotifications";
 import { getChatTitle } from "./utils/chats";
@@ -256,7 +256,7 @@ export default function App() {
             }
           }
           if (isIncomingMessage) {
-            shouldNotifyWhenMessageArrives()
+            shouldNotifyForIncomingMessage(isActiveChatMessage)
               .then((shouldNotify) => {
                 if (shouldNotify) notifyIncomingMessage(message, eventChatId);
               })
@@ -554,6 +554,10 @@ export default function App() {
           ...(prev || {}),
           ...resolved,
         }));
+      } else {
+        setActiveChat(null);
+        setMessages([]);
+        activeChatIdRef.current = null;
       }
     }
 
@@ -673,13 +677,12 @@ export default function App() {
     return data.chat;
   }
 
-  async function startChat(userId) {
-    try {
-      setError("");
-      await openPrivateChat(userId, { closeSearch: true });
-    } catch (err) {
-      setError(err.message);
-    }
+  function openUserFromSearch(user) {
+    if (!user) return;
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchResults([]);
+    openUserPeerProfile(user);
   }
 
   function toggleGroupUser(user) {
@@ -944,7 +947,7 @@ export default function App() {
     if (!userId) return;
     try {
       setError("");
-      await openPrivateChat(userId);
+      await openPrivateChat(userId, { closeSearch: true });
       setPeerProfileOpen(false);
       setPeerProfileUser(null);
     } catch (err) {
@@ -1227,7 +1230,7 @@ export default function App() {
         results={searchResults}
         onClose={() => setSearchOpen(false)}
         onQueryChange={setSearchQuery}
-        onStartChat={startChat}
+        onSelectUser={openUserFromSearch}
       />
 
       <ForwardMessageModal

@@ -96,17 +96,36 @@ export async function showMessageNotification({ title, body, tag, onClick, chatI
   return notification;
 }
 
-export async function shouldNotifyWhenMessageArrives() {
+/** @param {boolean} isActiveChat — сообщение в открытом сейчас чате */
+export async function shouldNotifyForIncomingMessage(isActiveChat) {
   const desktop = getDesktopApi();
-  if (desktop?.shouldNotify) {
+
+  if (desktop) {
+    try {
+      const enabled = await desktop.getNotificationsEnabled?.();
+      if (enabled === false) return false;
+    } catch {
+      // ignore
+    }
+    if (!isActiveChat) return true;
     try {
       return await desktop.shouldNotify();
     } catch {
       return true;
     }
   }
+
+  if (!canUseNotifications() || Notification.permission !== "granted") {
+    return false;
+  }
+  if (!isActiveChat) return true;
   if (typeof document === "undefined") return false;
   return document.visibilityState !== "visible" || !document.hasFocus();
+}
+
+/** @deprecated use shouldNotifyForIncomingMessage */
+export async function shouldNotifyWhenMessageArrives() {
+  return shouldNotifyForIncomingMessage(false);
 }
 
 const desktopClickHandlers = new Map();

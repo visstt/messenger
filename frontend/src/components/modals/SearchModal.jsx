@@ -7,7 +7,7 @@ export default function SearchModal({
   results,
   onClose,
   onQueryChange,
-  onStartChat,
+  onSelectUser,
 }) {
   if (!open) return null;
 
@@ -27,7 +27,7 @@ export default function SearchModal({
               key={user.id}
               className="tg-contact-picker__row"
               type="button"
-              onClick={() => onStartChat(user.id)}
+              onClick={() => onSelectUser?.(user)}
             >
               <Avatar user={user} />
               <div className="tg-contact-picker__copy">

@@ -264,7 +264,6 @@ function registerIpcHandlers() {
 
   ipcMain.on("notification:show", (_event, payload) => {
     if (!store.get("notificationsEnabled")) return;
-    if (!shouldShowNotificationNow()) return;
     showToast(payload);
   });
 
@@ -314,6 +313,8 @@ function showToast(payload) {
     height: TOAST_HEIGHT,
     frame: false,
     transparent: true,
+    backgroundColor: "#00000000",
+    hasShadow: true,
     resizable: false,
     movable: false,
     minimizable: false,
@@ -352,7 +353,12 @@ function showToast(payload) {
     }
   });
 
-  toastWindow.loadFile(path.join(__dirname, "toast.html"));
+  const toastHtml = path.join(__dirname, "toast.html");
+  toastWindow.webContents.on("did-fail-load", () => {
+    dismissToast(entry);
+  });
+
+  toastWindow.loadFile(toastHtml);
   toastWindow.webContents.once("did-finish-load", () => {
     if (toastWindow.isDestroyed()) return;
 
@@ -361,7 +367,11 @@ function showToast(payload) {
       body: payload?.body || "",
     });
     layoutToasts();
-    toastWindow.showInactive();
+    if (process.platform === "win32") {
+      toastWindow.show();
+    } else {
+      toastWindow.showInactive();
+    }
 
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = setTimeout(() => {
@@ -404,7 +414,7 @@ function dismissToast(entry) {
   if (index >= 0) activeToasts.splice(index, 1);
   if (!entry.window.isDestroyed()) {
     entry.window.removeAllListeners("closed");
-    entry.window.destroy();
+    entry.window.close();
   }
   layoutToasts();
 }
