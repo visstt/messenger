@@ -9,6 +9,7 @@ cd "$ROOT"
 CHAT_URL="https://chat.5-35-88-205.sslip.io"
 CHAT_HOST="chat.5-35-88-205.sslip.io"
 LIVEKIT_HOST="livekit.5-35-88-205.sslip.io"
+DESKTOP_DIR="$ROOT/desktop"
 NGINX_SITE="messenger"
 NGINX_AVAILABLE="/etc/nginx/sites-available/${NGINX_SITE}"
 NGINX_ENABLED="/etc/nginx/sites-enabled/${NGINX_SITE}"
@@ -46,11 +47,64 @@ git_pull() {
   fi
 }
 
+DESKTOP_INSTALLER="$ROOT/frontend/public/downloads/Signal-Desktop-Setup.exe"
+DESKTOP_STAMP="$ROOT/deploy/.desktop-build-stamp"
+
+should_build_desktop() {
+  if [[ "${SKIP_DESKTOP_BUILD:-}" == "1" ]]; then
+    return 1
+  fi
+  if [[ "${FORCE_DESKTOP_BUILD:-}" == "1" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$DESKTOP_INSTALLER" ]]; then
+    return 0
+  fi
+
+  if [[ -d "$ROOT/.git" ]]; then
+    local before after
+    before="$(git rev-parse HEAD@{1} 2>/dev/null || true)"
+    after="$(git rev-parse HEAD 2>/dev/null || true)"
+    if [[ -n "$before" && -n "$after" && "$before" != "$after" ]]; then
+      if git diff --name-only "$before" "$after" | grep -qE '^(desktop/|frontend/public/pwa-)'; then
+        return 0
+      fi
+    fi
+  fi
+
+  if find "$DESKTOP_DIR/electron" "$DESKTOP_DIR/scripts" "$DESKTOP_DIR/package.json" "$DESKTOP_DIR/package-lock.json" \
+    -type f -newer "$DESKTOP_INSTALLER" 2>/dev/null | head -1 | grep -q .; then
+    return 0
+  fi
+
+  return 1
+}
+
+build_desktop_installer() {
+  if ! should_build_desktop; then
+    log "Desktop: пересборка не нужна (изменений в desktop/ нет)"
+    return 0
+  fi
+
+  log "Desktop: сборка Windows .exe в Docker (10–20 мин при первом запуске)"
+  require_cmd docker
+
+  if bash "$ROOT/deploy/build-desktop-docker.sh"; then
+    git rev-parse HEAD >"$DESKTOP_STAMP" 2>/dev/null || date -Iseconds >"$DESKTOP_STAMP"
+    log "Desktop: установщик обновлён → frontend/public/downloads/"
+    return 0
+  fi
+
+  warn "Сборка desktop на сервере не удалась"
+  check_desktop_installer
+  return 1
+}
+
 check_desktop_installer() {
-  local installer="$ROOT/frontend/public/downloads/Signal-Desktop-Setup.exe"
-  if [[ ! -f "$installer" ]]; then
-    warn "Нет $installer — кнопка «Скачать для ПК» не сработает."
-    warn "На Windows: cd desktop && npm run dist && npm run publish-installer, затем снова deploy/update.sh"
+  if [[ ! -f "$DESKTOP_INSTALLER" ]]; then
+    warn "Нет $DESKTOP_INSTALLER — кнопка «Скачать для ПК» не сработает."
+    warn "Повторите: FORCE_DESKTOP_BUILD=1 bash deploy/update.sh"
+    warn "Или соберите на Windows: powershell deploy/release-windows.ps1"
   fi
 }
 
@@ -117,6 +171,7 @@ main() {
   log "Deploy Signal → ${CHAT_URL}"
   sync_env
   git_pull
+  build_desktop_installer || true
   check_desktop_installer
   docker_deploy
   setup_nginx

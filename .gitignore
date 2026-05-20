@@ -1,6 +1,10 @@
 # Local env (production URLs, secrets)
 .env
 
+# Desktop installer (собирается на сервере deploy/update.sh или локально npm run release)
+frontend/public/downloads/Signal-Desktop-Setup.exe
+deploy/.desktop-build-stamp
+
 # Dependencies
 node_modules/
 frontend/node_modules/
