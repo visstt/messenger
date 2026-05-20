@@ -50,6 +50,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  uploadChatAvatar: (chatId, formData) =>
+    request(`/api/chats/${chatId}/avatar`, {
+      method: "POST",
+      body: formData,
+    }),
   enableChatE2EE: (chatId) =>
     request(`/api/chats/${chatId}/e2ee/enable`, {
       method: "POST",
@@ -118,6 +123,11 @@ export const api = {
   editMessage: (messageId, body) =>
     request(`/api/messages/${messageId}`, {
       method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  toggleReaction: (messageId, body) =>
+    request(`/api/messages/${messageId}/reactions`, {
+      method: "POST",
       body: JSON.stringify(body),
     }),
   deleteMessage: (messageId) =>

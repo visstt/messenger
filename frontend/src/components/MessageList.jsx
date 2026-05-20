@@ -33,6 +33,7 @@ export default function MessageList({
   onReply,
   onForward,
   onTogglePin,
+  onToggleReaction,
   onOpenImage,
   forceScroll,
 }) {
@@ -53,6 +54,7 @@ export default function MessageList({
     () => new Map(messages.map((message) => [Number(message.id), message])),
     [messages]
   );
+  const quickReactions = useMemo(() => ["👍", "❤️", "😂", "😮", "😢", "🔥"], []);
 
   useEffect(() => {
     if (previousChatIdRef.current !== chatId) {
@@ -66,6 +68,17 @@ export default function MessageList({
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages, forceScroll]);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+
+    function blockNativeContextMenu(event) {
+      event.preventDefault();
+    }
+
+    window.addEventListener("contextmenu", blockNativeContextMenu, true);
+    return () => window.removeEventListener("contextmenu", blockNativeContextMenu, true);
+  }, [contextMenu]);
 
   useEffect(() => {
     function closeMenu(event) {
@@ -94,7 +107,7 @@ export default function MessageList({
     const rect = event.currentTarget?.getBoundingClientRect?.();
     const rawX = event.clientX || rect?.left || window.innerWidth / 2;
     const rawY = event.clientY || rect?.top || window.innerHeight / 2;
-    const x = Math.min(rawX, window.innerWidth - 220);
+    const x = Math.min(rawX, window.innerWidth - 320);
     const y = Math.min(rawY, window.innerHeight - 280);
     setContextMenu({ message, x, y });
   }
@@ -108,6 +121,7 @@ export default function MessageList({
   return (
     <section
       className="message-list"
+      onContextMenu={(event) => event.preventDefault()}
       onScroll={(event) => {
         const node = event.currentTarget;
         const offset = node.scrollHeight - node.scrollTop - node.clientHeight;
@@ -217,6 +231,21 @@ export default function MessageList({
                   )}
                 </>
               )}
+              {!message.deletedAt && Array.isArray(message.reactions) && message.reactions.length > 0 && (
+                <div className="bubble-reactions" onPointerDown={(event) => event.stopPropagation()}>
+                  {message.reactions.map((reaction) => (
+                    <button
+                      key={`${message.id}-${reaction.emoji}`}
+                      type="button"
+                      className={`reaction-chip ${reaction.reacted ? "active" : ""}`}
+                      onClick={() => onToggleReaction?.(message, reaction.emoji)}
+                    >
+                      <span>{reaction.emoji}</span>
+                      <small>{reaction.count}</small>
+                    </button>
+                  ))}
+                </div>
+              )}
               <footer className="bubble-meta">
                 <span>{formatClock(message.createdAt)}</span>
                 {message.pinnedAt && <span>закреплено</span>}
@@ -239,7 +268,27 @@ export default function MessageList({
             }}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
           >
+            {!contextMenu.message.deletedAt && (
+              <div className="message-reaction-row">
+                {quickReactions.map((emoji) => (
+                  <button
+                    key={`${contextMenu.message.id}-${emoji}`}
+                    type="button"
+                    className="reaction-picker-chip"
+                    onClick={() => {
+                      onToggleReaction?.(contextMenu.message, emoji);
+                      setContextMenu(null);
+                    }}
+                    title={`Реакция ${emoji}`}
+                    aria-label={`Добавить реакцию ${emoji}`}
+                  >
+                    <span className="reaction-picker-icon">{emoji}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <button type="button" onClick={() => runMenuAction(onReply)}>
               <FiCornerUpLeft />
               <span>Ответить</span>

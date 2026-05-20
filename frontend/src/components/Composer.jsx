@@ -50,6 +50,8 @@ export default function Composer({
   const mobileRecorderHoldRef = useRef(false);
   const mobileRecorderPressedRef = useRef(false);
   const mobileRecorderPointerIdRef = useRef(null);
+  const autoSentVoiceBlobRef = useRef(null);
+  const autoSentVideoBlobRef = useRef(null);
   const videoNoteRecorderRef = useRef(null);
   const videoNoteStreamRef = useRef(null);
   const videoNoteChunksRef = useRef([]);
@@ -145,7 +147,29 @@ export default function Composer({
 
   useEffect(() => {
     resetComposerState();
+    autoSentVoiceBlobRef.current = null;
+    autoSentVideoBlobRef.current = null;
   }, [chatId]);
+
+  useEffect(() => {
+    if (!hasVoiceDraft || isRecordingInProgress || isSendingVoice || !recordedBlob) return;
+    if (autoSentVoiceBlobRef.current === recordedBlob) return;
+
+    autoSentVoiceBlobRef.current = recordedBlob;
+    sendVoiceDraft().catch((error) => {
+      setRecorderError(getRecorderErrorMessage(error, "microphone"));
+    });
+  }, [hasVoiceDraft, isRecordingInProgress, isSendingVoice, recordedBlob]);
+
+  useEffect(() => {
+    if (!hasVideoNoteDraft || isRecordingVideoNote || isSendingVideoNote || !videoNoteBlob) return;
+    if (autoSentVideoBlobRef.current === videoNoteBlob) return;
+
+    autoSentVideoBlobRef.current = videoNoteBlob;
+    sendVideoNoteDraft().catch((error) => {
+      setRecorderError(getRecorderErrorMessage(error, "camera"));
+    });
+  }, [hasVideoNoteDraft, isRecordingVideoNote, isSendingVideoNote, videoNoteBlob]);
 
   useEffect(() => {
     if (!showVoicePanel) {
@@ -178,6 +202,8 @@ export default function Composer({
     clearAttachments();
     clearCanvasRef.current?.();
     discardVideoNote();
+    autoSentVoiceBlobRef.current = null;
+    autoSentVideoBlobRef.current = null;
   }
 
   function addAttachments(files) {
@@ -431,6 +457,7 @@ export default function Composer({
     }
     videoNoteRecorderRef.current = null;
     videoNoteChunksRef.current = [];
+    autoSentVideoBlobRef.current = null;
     setIsRecordingVideoNote(false);
     setVideoNoteBlob(null);
     setVideoNoteDurationSec(0);
@@ -511,7 +538,13 @@ export default function Composer({
             />
           </div>
           <div className="video-note-draft-copy">
-            <strong>{isRecordingVideoNote ? "Запись видеокружка" : "Видеокружок готов"}</strong>
+            <strong>
+              {isRecordingVideoNote
+                ? "Запись видеокружка"
+                : isSendingVideoNote
+                  ? "Отправка видеокружка..."
+                  : "Видеокружок готов"}
+            </strong>
             <span>{formatSeconds(isRecordingVideoNote ? videoNoteElapsedSec : videoNoteDurationSec)}</span>
           </div>
           <div className="video-note-draft-actions">
@@ -529,7 +562,10 @@ export default function Composer({
                 <button
                   type="button"
                   className="video-note-action"
-                  onClick={discardVideoNote}
+                  onClick={() => {
+                    autoSentVideoBlobRef.current = null;
+                    discardVideoNote();
+                  }}
                   aria-label="Отменить видеокружок"
                 >
                   <FiX />
@@ -717,6 +753,7 @@ export default function Composer({
                 aria-label="Отменить голосовое"
                 onClick={() => {
                   stopAudioPlayback();
+                  autoSentVoiceBlobRef.current = null;
                   setIsVoiceUiCleared(true);
                   setVoiceVisualizerMounted(false);
                   clearCanvas();

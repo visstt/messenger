@@ -22,6 +22,7 @@ type User struct {
 	Name      string    `json:"name"`
 	Username  string    `json:"username"`
 	Email     string    `json:"email"`
+	Phone     string    `json:"phone"`
 	Bio       string    `json:"bio"`
 	AvatarURL string    `json:"avatarUrl"`
 	PublicKey string    `json:"publicKey"`
@@ -46,6 +47,13 @@ type Message struct {
 	CreatedAt        time.Time  `json:"createdAt"`
 	Sender           User       `json:"sender"`
 	Status           string     `json:"status"`
+	Reactions        []Reaction `json:"reactions"`
+}
+
+type Reaction struct {
+	Emoji   string `json:"emoji"`
+	Count   int    `json:"count"`
+	Reacted bool   `json:"reacted"`
 }
 
 type ChatPreview struct {
@@ -82,6 +90,7 @@ type Credentials struct {
 type ProfileUpdate struct {
 	Name      string `json:"name"`
 	Username  string `json:"username"`
+	Phone     string `json:"phone"`
 	Bio       string `json:"bio"`
 	AvatarURL string `json:"avatarUrl"`
 }
@@ -113,6 +122,7 @@ CREATE TABLE IF NOT EXISTS users (
 	name TEXT NOT NULL,
 	username TEXT NOT NULL UNIQUE,
 	email TEXT NOT NULL UNIQUE,
+	phone TEXT NOT NULL DEFAULT '',
 	password_hash TEXT NOT NULL,
 	bio TEXT NOT NULL DEFAULT '',
 	avatar_url TEXT NOT NULL DEFAULT '',
@@ -155,12 +165,22 @@ CREATE TABLE IF NOT EXISTS messages (
 	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS message_reactions (
+	message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+	user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	emoji TEXT NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	PRIMARY KEY (message_id, user_id, emoji)
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_chat_created_at ON messages(chat_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_chat_participants_user_id ON chat_participants(user_id);
+CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id);
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS e2ee_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS public_key TEXT NOT NULL DEFAULT '';
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS encrypted_payload TEXT NOT NULL DEFAULT '';
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS encryption_meta TEXT NOT NULL DEFAULT '';
@@ -246,9 +266,9 @@ func (s *Store) CreateUser(ctx context.Context, input Credentials) (User, error)
 	err = s.db.QueryRow(ctx, `
 		INSERT INTO users (name, username, email, password_hash)
 		VALUES ($1, LOWER($2), LOWER($3), $4)
-		RETURNING id, name, username, email, bio, avatar_url, public_key, created_at
+		RETURNING id, name, username, email, phone, bio, avatar_url, public_key, created_at
 	`, strings.TrimSpace(input.Name), strings.TrimSpace(input.Username), strings.TrimSpace(input.Email), hash).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
 	return user, err
 }
 
@@ -256,11 +276,11 @@ func (s *Store) AuthenticateUser(ctx context.Context, identifier, password strin
 	var user User
 	var passwordHash string
 	err := s.db.QueryRow(ctx, `
-		SELECT id, name, username, email, bio, avatar_url, public_key, created_at, password_hash
+		SELECT id, name, username, email, phone, bio, avatar_url, public_key, created_at, password_hash
 		FROM users
 		WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
 	`, strings.TrimSpace(identifier)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt, &passwordHash)
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt, &passwordHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrNotFound
@@ -276,10 +296,10 @@ func (s *Store) AuthenticateUser(ctx context.Context, identifier, password strin
 func (s *Store) GetUserByID(ctx context.Context, userID int64) (User, error) {
 	var user User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, name, username, email, bio, avatar_url, public_key, created_at
+		SELECT id, name, username, email, phone, bio, avatar_url, public_key, created_at
 		FROM users
 		WHERE id = $1
-	`, userID).Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
+	`, userID).Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrNotFound
@@ -291,7 +311,7 @@ func (s *Store) GetUserByID(ctx context.Context, userID int64) (User, error) {
 
 func (s *Store) SearchUsers(ctx context.Context, currentUserID int64, query string) ([]User, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, name, username, email, bio, avatar_url, public_key, created_at
+		SELECT id, name, username, email, phone, bio, avatar_url, public_key, created_at
 		FROM users
 		WHERE id <> $1
 		  AND (
@@ -310,7 +330,7 @@ func (s *Store) SearchUsers(ctx context.Context, currentUserID int64, query stri
 	var users []User
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -324,12 +344,13 @@ func (s *Store) UpdateProfile(ctx context.Context, userID int64, input ProfileUp
 		UPDATE users
 		SET name = $2,
 			username = LOWER($3),
-			bio = $4,
-			avatar_url = $5
+			phone = $4,
+			bio = $5,
+			avatar_url = $6
 		WHERE id = $1
-		RETURNING id, name, username, email, bio, avatar_url, public_key, created_at
-	`, userID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Username), strings.TrimSpace(input.Bio), strings.TrimSpace(input.AvatarURL)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
+		RETURNING id, name, username, email, phone, bio, avatar_url, public_key, created_at
+	`, userID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Username), strings.TrimSpace(input.Phone), strings.TrimSpace(input.Bio), strings.TrimSpace(input.AvatarURL)).
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
 	return user, err
 }
 
@@ -339,9 +360,9 @@ func (s *Store) UpdateAvatar(ctx context.Context, userID int64, avatarURL string
 		UPDATE users
 		SET avatar_url = $2
 		WHERE id = $1
-		RETURNING id, name, username, email, bio, avatar_url, public_key, created_at
+		RETURNING id, name, username, email, phone, bio, avatar_url, public_key, created_at
 	`, userID, strings.TrimSpace(avatarURL)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
 	return user, err
 }
 
@@ -351,9 +372,9 @@ func (s *Store) UpdatePublicKey(ctx context.Context, userID int64, publicKey str
 		UPDATE users
 		SET public_key = $2
 		WHERE id = $1
-		RETURNING id, name, username, email, bio, avatar_url, public_key, created_at
+		RETURNING id, name, username, email, phone, bio, avatar_url, public_key, created_at
 	`, userID, strings.TrimSpace(publicKey)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
 	return user, err
 }
 
@@ -535,6 +556,28 @@ func (s *Store) CreateGroupChat(ctx context.Context, currentUserID int64, title 
 	return s.GetChatDetails(ctx, currentUserID, chatID)
 }
 
+func (s *Store) UpdateChatAvatar(ctx context.Context, currentUserID, chatID int64, avatarURL string) (ChatDetails, error) {
+	var updatedID int64
+	err := s.db.QueryRow(ctx, `
+		UPDATE chats c
+		SET avatar_url = $3, updated_at = NOW()
+		FROM chat_participants cp
+		WHERE c.id = $2
+		  AND cp.chat_id = c.id
+		  AND cp.user_id = $1
+		  AND c.kind = 'group'
+		RETURNING c.id
+	`, currentUserID, chatID, strings.TrimSpace(avatarURL)).Scan(&updatedID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ChatDetails{}, ErrNotFound
+		}
+		return ChatDetails{}, err
+	}
+
+	return s.GetChatDetails(ctx, currentUserID, updatedID)
+}
+
 func (s *Store) GetChatDetails(ctx context.Context, currentUserID, chatID int64) (ChatDetails, error) {
 	var chat ChatDetails
 	err := s.db.QueryRow(ctx, `
@@ -561,7 +604,7 @@ func (s *Store) GetChatDetails(ctx context.Context, currentUserID, chatID int64)
 
 func (s *Store) ListChatParticipants(ctx context.Context, chatID int64) ([]User, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT u.id, u.name, u.username, u.email, u.bio, u.avatar_url, u.public_key, u.created_at
+		SELECT u.id, u.name, u.username, u.email, u.phone, u.bio, u.avatar_url, u.public_key, u.created_at
 		FROM chat_participants cp
 		JOIN users u ON u.id = cp.user_id
 		WHERE cp.chat_id = $1
@@ -575,7 +618,7 @@ func (s *Store) ListChatParticipants(ctx context.Context, chatID int64) ([]User,
 	var users []User
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -594,7 +637,7 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 			c.updated_at,
 			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec, m.encrypted_payload, m.encryption_meta,
 			m.reply_to_message_id, m.pinned_at, m.edited_at, m.deleted_at, m.created_at,
-			su.id, su.name, su.username, su.email, su.bio, su.avatar_url, su.public_key, su.created_at,
+			su.id, su.name, su.username, su.email, su.phone, su.bio, su.avatar_url, su.public_key, su.created_at,
 			COALESCE((
 				SELECT COUNT(*)
 				FROM messages unread
@@ -634,7 +677,7 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 		var replyTo *int64
 		var pinnedAt, editedAt, deletedAt, messageCreatedAt *time.Time
 		var senderID *int64
-		var senderName, senderUsername, senderEmail, senderBio, senderAvatar, senderPublicKey *string
+		var senderName, senderUsername, senderEmail, senderPhone, senderBio, senderAvatar, senderPublicKey *string
 		var senderCreatedAt *time.Time
 		var peerLastRead int64
 
@@ -647,7 +690,7 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 			&preview.UpdatedAt,
 			&lastMessageID, &lastMessageChatID, &lastMessageSenderID, &lastMessageKind, &lastMessageText, &lastMessageFileURL, &lastMessageFileName, &lastMessageDuration, &lastMessageEncryptedPayload, &lastMessageEncryptionMeta,
 			&replyTo, &pinnedAt, &editedAt, &deletedAt, &messageCreatedAt,
-			&senderID, &senderName, &senderUsername, &senderEmail, &senderBio, &senderAvatar, &senderPublicKey, &senderCreatedAt,
+			&senderID, &senderName, &senderUsername, &senderEmail, &senderPhone, &senderBio, &senderAvatar, &senderPublicKey, &senderCreatedAt,
 			&preview.UnreadCount,
 			&peerLastRead,
 		); err != nil {
@@ -679,6 +722,7 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 					Name:      derefString(senderName),
 					Username:  derefString(senderUsername),
 					Email:     derefString(senderEmail),
+					Phone:     derefString(senderPhone),
 					Bio:       derefString(senderBio),
 					AvatarURL: derefString(senderAvatar),
 					PublicKey: derefString(senderPublicKey),
@@ -717,7 +761,7 @@ func (s *Store) ListMessages(ctx context.Context, currentUserID, chatID int64, l
 		SELECT
 			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec, m.encrypted_payload, m.encryption_meta,
 			m.reply_to_message_id, m.pinned_at, m.edited_at, m.deleted_at, m.created_at,
-			u.id, u.name, u.username, u.email, u.bio, u.avatar_url, u.public_key, u.created_at
+			u.id, u.name, u.username, u.email, u.phone, u.bio, u.avatar_url, u.public_key, u.created_at
 		FROM messages m
 		JOIN users u ON u.id = m.sender_id
 		WHERE m.chat_id = $1
@@ -735,7 +779,7 @@ func (s *Store) ListMessages(ctx context.Context, currentUserID, chatID int64, l
 		if err := rows.Scan(
 			&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Kind, &msg.Text, &msg.FileURL, &msg.FileName, &msg.DurationSec, &msg.EncryptedPayload, &msg.EncryptionMeta,
 			&msg.ReplyToMessage, &msg.PinnedAt, &msg.EditedAt, &msg.DeletedAt, &msg.CreatedAt,
-			&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.PublicKey, &msg.Sender.CreatedAt,
+			&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Phone, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.PublicKey, &msg.Sender.CreatedAt,
 		); err != nil {
 			return ChatDetails{}, nil, err
 		}
@@ -743,6 +787,10 @@ func (s *Store) ListMessages(ctx context.Context, currentUserID, chatID int64, l
 		items = append(items, msg)
 	}
 	if err := rows.Err(); err != nil {
+		return ChatDetails{}, nil, err
+	}
+
+	if err := s.attachReactions(ctx, currentUserID, items); err != nil {
 		return ChatDetails{}, nil, err
 	}
 
@@ -950,7 +998,7 @@ func (s *Store) GetMessageByID(ctx context.Context, currentUserID, messageID int
 		SELECT
 			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec, m.encrypted_payload, m.encryption_meta,
 			m.reply_to_message_id, m.pinned_at, m.edited_at, m.deleted_at, m.created_at,
-			u.id, u.name, u.username, u.email, u.bio, u.avatar_url, u.public_key, u.created_at,
+			u.id, u.name, u.username, u.email, u.phone, u.bio, u.avatar_url, u.public_key, u.created_at,
 			COALESCE((
 				SELECT MIN(COALESCE(cp.last_read_message_id, 0))
 				FROM chat_participants cp
@@ -963,7 +1011,7 @@ func (s *Store) GetMessageByID(ctx context.Context, currentUserID, messageID int
 	`, currentUserID, messageID).Scan(
 		&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Kind, &msg.Text, &msg.FileURL, &msg.FileName, &msg.DurationSec, &msg.EncryptedPayload, &msg.EncryptionMeta,
 		&msg.ReplyToMessage, &msg.PinnedAt, &msg.EditedAt, &msg.DeletedAt, &msg.CreatedAt,
-		&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.PublicKey, &msg.Sender.CreatedAt,
+		&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Phone, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.PublicKey, &msg.Sender.CreatedAt,
 		&peerLastRead,
 	)
 	if err != nil {
@@ -973,7 +1021,126 @@ func (s *Store) GetMessageByID(ctx context.Context, currentUserID, messageID int
 		return Message{}, err
 	}
 	msg.Status = statusForMessage(msg.SenderID, currentUserID, msg.ID, peerLastRead)
+	reactionsMap, err := s.loadReactionsMap(ctx, currentUserID, []int64{msg.ID})
+	if err != nil {
+		return Message{}, err
+	}
+	msg.Reactions = reactionsMap[msg.ID]
 	return msg, nil
+}
+
+func (s *Store) ToggleMessageReaction(ctx context.Context, currentUserID, messageID int64, emoji string) (Message, []int64, error) {
+	emoji = strings.TrimSpace(emoji)
+	if emoji == "" {
+		return Message{}, nil, fmt.Errorf("emoji is required")
+	}
+	if len([]rune(emoji)) > 8 {
+		return Message{}, nil, fmt.Errorf("emoji is too long")
+	}
+
+	var chatID int64
+	err := s.db.QueryRow(ctx, `
+		SELECT m.chat_id
+		FROM messages m
+		JOIN chat_participants cp ON cp.chat_id = m.chat_id AND cp.user_id = $2
+		WHERE m.id = $1 AND m.deleted_at IS NULL AND m.kind <> 'system'
+	`, messageID, currentUserID).Scan(&chatID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Message{}, nil, ErrNotFound
+		}
+		return Message{}, nil, err
+	}
+
+	var exists bool
+	if err := s.db.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM message_reactions
+			WHERE message_id = $1 AND user_id = $2 AND emoji = $3
+		)
+	`, messageID, currentUserID, emoji).Scan(&exists); err != nil {
+		return Message{}, nil, err
+	}
+
+	if exists {
+		if _, err := s.db.Exec(ctx, `
+			DELETE FROM message_reactions
+			WHERE message_id = $1 AND user_id = $2 AND emoji = $3
+		`, messageID, currentUserID, emoji); err != nil {
+			return Message{}, nil, err
+		}
+	} else {
+		if _, err := s.db.Exec(ctx, `
+			INSERT INTO message_reactions (message_id, user_id, emoji)
+			VALUES ($1, $2, $3)
+		`, messageID, currentUserID, emoji); err != nil {
+			return Message{}, nil, err
+		}
+	}
+
+	recipientIDs, err := s.GetRecipientIDs(ctx, currentUserID, chatID)
+	if err != nil {
+		return Message{}, nil, err
+	}
+
+	msg, err := s.GetMessageByID(ctx, currentUserID, messageID)
+	return msg, recipientIDs, err
+}
+
+func (s *Store) attachReactions(ctx context.Context, currentUserID int64, messages []Message) error {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	messageIDs := make([]int64, 0, len(messages))
+	for i := range messages {
+		messageIDs = append(messageIDs, messages[i].ID)
+	}
+
+	reactionsMap, err := s.loadReactionsMap(ctx, currentUserID, messageIDs)
+	if err != nil {
+		return err
+	}
+
+	for i := range messages {
+		messages[i].Reactions = reactionsMap[messages[i].ID]
+	}
+	return nil
+}
+
+func (s *Store) loadReactionsMap(ctx context.Context, currentUserID int64, messageIDs []int64) (map[int64][]Reaction, error) {
+	result := make(map[int64][]Reaction)
+	if len(messageIDs) == 0 {
+		return result, nil
+	}
+
+	rows, err := s.db.Query(ctx, `
+		SELECT
+			mr.message_id,
+			mr.emoji,
+			COUNT(*)::int AS count,
+			BOOL_OR(mr.user_id = $1) AS reacted
+		FROM message_reactions mr
+		WHERE mr.message_id = ANY($2)
+		GROUP BY mr.message_id, mr.emoji
+		ORDER BY mr.message_id, MAX(mr.created_at)
+	`, currentUserID, messageIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var messageID int64
+		var reaction Reaction
+		if err := rows.Scan(&messageID, &reaction.Emoji, &reaction.Count, &reaction.Reacted); err != nil {
+			return nil, err
+		}
+		result[messageID] = append(result[messageID], reaction)
+	}
+
+	return result, rows.Err()
 }
 
 func (s *Store) MarkChatRead(ctx context.Context, currentUserID, chatID int64) ([]int64, error) {

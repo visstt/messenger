@@ -1573,6 +1573,35 @@ button {
   font-size: 0.82rem;
 }
 
+.bubble-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.reaction-chip {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
+  border-radius: 999px;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--text);
+}
+
+.reaction-chip small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.reaction-chip.active {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 .icon-button {
   width: 2.3rem;
   height: 2.3rem;
@@ -1596,7 +1625,9 @@ button {
 .message-context-menu {
   position: fixed;
   z-index: 9999;
-  width: 12rem;
+  width: max-content;
+  min-width: 14rem;
+  max-width: min(22rem, calc(100vw - 12px));
   display: grid;
   gap: 4px;
   padding: 6px;
@@ -1632,6 +1663,68 @@ button {
 
 .message-context-menu .danger-menu-item {
   color: #a43238;
+}
+
+.message-reaction-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+  margin-bottom: 2px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.reaction-picker-chip {
+  min-height: 36px;
+  width: 36px;
+  min-width: 36px;
+  display: inline-flex;
+  align-items: center;
+  place-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  font-size: 1.02rem;
+  line-height: 1;
+  transition: transform 120ms ease, background 120ms ease;
+  flex: 0 0 auto;
+}
+
+.reaction-picker-chip:hover {
+  transform: scale(1.08);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.reaction-picker-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 1.05rem;
+}
+
+.reaction-picker-chip--like .reaction-picker-icon {
+  color: #4b9cff;
+}
+.reaction-picker-chip--love .reaction-picker-icon {
+  color: #ff5e90;
+}
+.reaction-picker-chip--laugh .reaction-picker-icon {
+  color: #ffb347;
+}
+.reaction-picker-chip--wow .reaction-picker-icon {
+  color: #f7c957;
+}
+.reaction-picker-chip--sad .reaction-picker-icon {
+  color: #74a6ff;
+}
+.reaction-picker-chip--fire .reaction-picker-icon {
+  color: #ff8a3d;
 }
 
 .incoming-call-backdrop {
@@ -3580,7 +3673,7 @@ button {
   padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
     max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   cursor: pointer;
-  z-index: 120;
+  z-index: 2005;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -4264,11 +4357,15 @@ button {
 /* Telegram-style feature surfaces: media, group creation, composer */
 .tg-peer-media {
   width: min(940px, calc(100vw - 32px));
+  max-height: min(calc(var(--app-height, 100dvh) - 20px), 92dvh);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tg-peer-media .tg-modal__body {
   display: grid;
   gap: 14px;
+  overflow: visible;
 }
 
 .tg-peer-media__hero {
@@ -4309,6 +4406,28 @@ button {
 .tg-peer-media__description {
   font-size: 0.9rem;
   line-height: 1.35;
+}
+
+.tg-peer-media__subtitle-button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  padding: 0;
+  font: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tg-peer-media__subtitle-button.active {
+  color: var(--accent);
+}
+
+.tg-peer-profile .tg-peer-media__subtitle-button {
+  text-align: center;
+  justify-self: center;
 }
 
 .tg-peer-media__tabs {
@@ -4357,8 +4476,7 @@ button {
 
 .tg-peer-media__panel {
   min-height: 300px;
-  max-height: min(56vh, 520px);
-  overflow: auto;
+  overflow: visible;
 }
 
 .tg-peer-media .peer-media-grid {
@@ -4392,6 +4510,59 @@ button {
 .tg-group-modal__form {
   display: grid;
   gap: 12px;
+}
+
+.tg-group-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tg-group-avatar-preview {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--input-bg) 78%, var(--tg-panel-bg));
+  color: var(--muted);
+}
+
+.tg-group-avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tg-group-avatar-picker {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 10px;
+  background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
+  color: var(--text);
+  position: relative;
+  overflow: hidden;
+}
+
+.tg-group-avatar-picker input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.tg-group-avatar-clear {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  min-height: 34px;
+  padding: 0 6px;
 }
 
 .tg-field {
@@ -4696,6 +4867,7 @@ button {
 .tg-peer-profile .tg-modal__body {
   display: grid;
   gap: 14px;
+  overflow: visible;
 }
 
 .tg-peer-profile .tg-peer-media__hero {
@@ -4704,6 +4876,19 @@ button {
   text-align: center;
   gap: 10px;
   padding: 8px 0 14px;
+}
+
+.tg-peer-media__avatar-upload {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 12px;
+  background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
+  color: var(--text);
 }
 
 .tg-peer-profile .tg-peer-media__hero .avatar {
@@ -4733,7 +4918,14 @@ button {
   place-items: center;
   padding: 10px 8px;
   border-radius: 12px;
+  border: 0;
   background: color-mix(in srgb, var(--input-bg) 78%, var(--tg-panel-bg));
+  color: inherit;
+  text-align: center;
+}
+
+.tg-peer-profile__stat.active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--tg-panel-bg));
 }
 
 .tg-peer-profile__stat strong {
@@ -4753,6 +4945,100 @@ button {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   padding: 2px 2px 0;
+}
+
+.tg-peer-profile__quick-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tg-peer-profile__quick-actions .tg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+}
+
+.tg-peer-user-fields {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--tg-panel-bg);
+  padding: 10px 12px;
+}
+
+.tg-peer-user-fields__row {
+  display: grid;
+  gap: 2px;
+}
+
+.tg-peer-user-fields__label {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.tg-peer-user-fields__value {
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.tg-peer-members {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--tg-panel-bg);
+  overflow: hidden;
+}
+
+.tg-peer-members__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.tg-peer-members__item:not(:last-child) {
+  border-bottom: 1px solid var(--line);
+}
+
+.tg-peer-members__item--button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tg-peer-members__item--button:hover {
+  background: var(--tg-hover);
+}
+
+.tg-peer-members__item .avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+}
+
+.tg-peer-members__copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.tg-peer-members__copy strong,
+.tg-peer-members__copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tg-peer-members__copy span {
+  color: var(--muted);
+  font-size: 0.84rem;
 }
 
 .tg-peer-profile .tg-peer-media__tabs {
@@ -4785,8 +5071,9 @@ button {
 }
 
 .tg-peer-profile .tg-peer-media__panel {
-  min-height: 220px;
-  max-height: min(42vh, 380px);
+  min-height: 220px !important;
+  max-height: none !important;
+  overflow: visible !important;
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 8px;
@@ -4802,9 +5089,42 @@ button {
 }
 
 @media (max-width: 640px) {
+  .tg-peer-profile__quick-actions {
+    grid-template-columns: 1fr;
+  }
+
   .tg-peer-profile__stats {
     grid-template-columns: 1fr;
   }
+
+  .tg-peer-media {
+    max-height: calc(var(--app-height, 100dvh) - 8px);
+  }
+
+  .tg-peer-media__panel {
+    min-height: 180px;
+  }
+}
+
+/* Force single-scroll behavior for peer media modal. */
+.tg-modal.tg-peer-profile {
+  max-height: min(calc(var(--app-height, 100dvh) - 16px), 94dvh);
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tg-modal.tg-peer-profile .tg-modal__body {
+  overflow: visible !important;
+}
+
+.tg-modal.tg-peer-profile .tg-peer-media__panel {
+  overflow: visible !important;
+}
+
+.tg-peer-members__empty {
+  padding: 12px;
+  color: var(--muted);
 }
 
 /* Final mobile shell rules: keep iOS Safari using the actual visible viewport. */

@@ -42,6 +42,11 @@ export default function ProfileEditorModal({
           value={draft.username}
           onChange={(event) => onChange((prev) => ({ ...prev, username: event.target.value }))}
         />
+        <Input
+          placeholder="Телефон (опционально)"
+          value={draft.phone || ""}
+          onChange={(event) => onChange((prev) => ({ ...prev, phone: event.target.value }))}
+        />
         <Textarea
           rows="4"
           placeholder="О себе"

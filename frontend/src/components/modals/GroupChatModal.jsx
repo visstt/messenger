@@ -1,4 +1,5 @@
-import { FiCheck, FiUsers, FiX } from "react-icons/fi";
+import { useEffect, useMemo } from "react";
+import { FiCamera, FiCheck, FiUsers, FiX } from "react-icons/fi";
 import Avatar from "../Avatar";
 import { Button, Input, Modal } from "../../ui";
 
@@ -8,15 +9,28 @@ export default function GroupChatModal({
   query,
   results,
   selectedUsers,
+  avatarFile,
   onClose,
   onTitleChange,
   onQueryChange,
+  onAvatarChange,
   onToggleUser,
   onCreate,
 }) {
-  if (!open) return null;
-
   const selectedIds = new Set(selectedUsers.map((user) => user.id));
+  const avatarPreview = useMemo(
+    () => (avatarFile ? URL.createObjectURL(avatarFile) : ""),
+    [avatarFile]
+  );
+
+  useEffect(
+    () => () => {
+      if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+    },
+    [avatarPreview]
+  );
+
+  if (!open) return null;
 
   return (
     <Modal open={open} onClose={onClose} title="Новая группа" contentClassName="tg-group-modal">
@@ -29,6 +43,37 @@ export default function GroupChatModal({
             value={title}
             onChange={(event) => onTitleChange(event.target.value)}
           />
+        </label>
+
+        <label className="tg-field">
+          <span>Аватар группы</span>
+          <div className="tg-group-avatar-row">
+            <div className="tg-group-avatar-preview" aria-hidden>
+              {avatarFile ? (
+                <img src={avatarPreview} alt="Предпросмотр аватара группы" />
+              ) : (
+                <FiUsers />
+              )}
+            </div>
+            <label className="tg-group-avatar-picker">
+              <FiCamera />
+              <span>{avatarFile ? "Сменить фото" : "Загрузить фото"}</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(event) => onAvatarChange(event.target.files?.[0] || null)}
+              />
+            </label>
+            {avatarFile && (
+              <button
+                type="button"
+                className="tg-group-avatar-clear"
+                onClick={() => onAvatarChange(null)}
+              >
+                Убрать
+              </button>
+            )}
+          </div>
         </label>
 
         <label className="tg-field">

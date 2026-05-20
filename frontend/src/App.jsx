@@ -30,7 +30,7 @@ import { parseAttachmentItems, parseImageItems, renderPreview } from "./utils/me
 import { normalizeMediaUrl } from "./utils/mediaUrls";
 import { useSwipeBack } from "./hooks/useSwipeBack";
 
-const emptyProfile = { name: "", username: "", bio: "", avatarUrl: "" };
+const emptyProfile = { name: "", username: "", phone: "", bio: "", avatarUrl: "" };
 
 export default function App() {
   const [isMobile, setIsMobile] = useState(() => {
@@ -57,10 +57,12 @@ export default function App() {
   const [groupQuery, setGroupQuery] = useState("");
   const [groupResults, setGroupResults] = useState([]);
   const [groupSelectedUsers, setGroupSelectedUsers] = useState([]);
+  const [groupAvatarFile, setGroupAvatarFile] = useState(null);
   const [typingState, setTypingState] = useState({});
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [peerProfileOpen, setPeerProfileOpen] = useState(false);
+  const [peerProfileUser, setPeerProfileUser] = useState(null);
   const [imageViewer, setImageViewer] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [editDialog, setEditDialog] = useState(null);
@@ -451,6 +453,7 @@ export default function App() {
     setProfileDraft({
       name: user.name,
       username: user.username,
+      phone: user.phone || "",
       bio: user.bio,
       avatarUrl: user.avatarUrl,
     });
@@ -601,21 +604,33 @@ export default function App() {
     setProfileOpen(false);
     setProfileEditorOpen(false);
     setPeerProfileOpen(false);
+    setPeerProfileUser(null);
     setGroupOpen(false);
     setGroupSelectedUsers([]);
+    setGroupAvatarFile(null);
     setImageViewer(null);
     setMobileScreen("sidebar");
+  }
+
+  async function openPrivateChat(userId, options = {}) {
+    const { closeSearch = false } = options;
+    const data = await api.createPrivateChat(userId);
+
+    if (closeSearch) {
+      setSearchOpen(false);
+      setSearchQuery("");
+      setSearchResults([]);
+    }
+
+    await fetchChats(data.chat.id);
+    await openChat(data.chat.id, { markRead: true, forceScroll: true });
+    return data.chat;
   }
 
   async function startChat(userId) {
     try {
       setError("");
-      const data = await api.createPrivateChat(userId);
-      setSearchOpen(false);
-      setSearchQuery("");
-      setSearchResults([]);
-      await fetchChats(data.chat.id);
-      await openChat(data.chat.id, { markRead: true, forceScroll: true });
+      await openPrivateChat(userId, { closeSearch: true });
     } catch (err) {
       setError(err.message);
     }
@@ -646,11 +661,22 @@ export default function App() {
         userIds: groupSelectedUsers.map((user) => user.id),
       });
 
+      if (groupAvatarFile) {
+        try {
+          const avatarData = new FormData();
+          avatarData.append("file", groupAvatarFile);
+          await api.uploadChatAvatar(data.chat.id, avatarData);
+        } catch {
+          pushToast("Группа создана, но аватар не загрузился");
+        }
+      }
+
       setGroupOpen(false);
       setGroupTitle("");
       setGroupQuery("");
       setGroupResults([]);
       setGroupSelectedUsers([]);
+      setGroupAvatarFile(null);
       await fetchChats(data.chat.id);
       await openChat(data.chat.id, { markRead: true, forceScroll: true });
       pushToast("Группа создана");
@@ -842,20 +868,52 @@ export default function App() {
     await refreshActiveChat();
   }
 
-  async function startCall(kind) {
-    if (!activeChat) return;
+  async function startCall(kind, overrideChat = null) {
+    const callChat = overrideChat || activeChat;
+    if (!callChat) return;
 
     try {
-      const callId = createCallId(activeChat.id);
-      const data = await api.createCallToken(activeChat.id, { kind });
-      await api.inviteCall(activeChat.id, { callId, kind });
+      const callId = createCallId(callChat.id);
+      const data = await api.createCallToken(callChat.id, { kind });
+      await api.inviteCall(callChat.id, { callId, kind });
       setActiveCall({
         ...data,
         callId,
         kind,
         status: "dialing",
-        chat: data.chat || activeChat,
+        chat: data.chat || callChat,
       });
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  function openUserPeerProfile(user) {
+    if (!user) return;
+    setPeerProfileUser(user);
+    setPeerProfileOpen(true);
+  }
+
+  async function handlePeerProfileStartChat(userId) {
+    if (!userId) return;
+    try {
+      setError("");
+      await openPrivateChat(userId);
+      setPeerProfileOpen(false);
+      setPeerProfileUser(null);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handlePeerProfileStartCall(userId, kind) {
+    if (!userId) return;
+    try {
+      setError("");
+      const chat = await openPrivateChat(userId);
+      setPeerProfileOpen(false);
+      setPeerProfileUser(null);
+      await startCall(kind, chat);
     } catch (err) {
       setError(err.message);
     }
@@ -962,6 +1020,32 @@ export default function App() {
     }
   }
 
+  async function uploadGroupAvatar(file) {
+    if (!activeChat || activeChat.kind !== "group" || !file) return;
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const data = await api.uploadChatAvatar(activeChat.id, formData);
+      setActiveChat((prev) => (prev ? { ...prev, ...data.chat } : prev));
+      setChats((prev) =>
+        prev.map((chat) => (Number(chat.id) === Number(data.chat.id) ? { ...chat, ...data.chat } : chat))
+      );
+      pushToast("Аватар чата обновлен");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function toggleReaction(message, emoji) {
+    if (!message?.id || !emoji) return;
+    try {
+      const data = await api.toggleReaction(message.id, { emoji });
+      setMessages((prev) => upsertMessage(prev, data.message));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   function openImageViewer(items, index = 0) {
     if (!items?.length) return;
     setImageViewer({ items, index });
@@ -1035,7 +1119,10 @@ export default function App() {
               chat={activeChat}
               activeTyping={activeTyping}
               loading={loadingChatId === activeChat.id}
-              onOpenProfile={() => setPeerProfileOpen(true)}
+              onOpenProfile={() => {
+                setPeerProfileUser(null);
+                setPeerProfileOpen(true);
+              }}
               onStartCall={startCall}
               onBack={isMobile ? handleMobileBack : undefined}
             />
@@ -1049,6 +1136,7 @@ export default function App() {
               onReply={(message) => setReplyDraft(message)}
               onForward={(message) => setForwardDraft(message)}
               onTogglePin={togglePinMessage}
+              onToggleReaction={toggleReaction}
               onOpenImage={openImageViewer}
               forceScroll={Boolean(activeChat.forceScroll)}
             />
@@ -1108,9 +1196,14 @@ export default function App() {
         query={groupQuery}
         results={groupResults}
         selectedUsers={groupSelectedUsers}
-        onClose={() => setGroupOpen(false)}
+        avatarFile={groupAvatarFile}
+        onClose={() => {
+          setGroupOpen(false);
+          setGroupAvatarFile(null);
+        }}
         onTitleChange={setGroupTitle}
         onQueryChange={setGroupQuery}
+        onAvatarChange={setGroupAvatarFile}
         onToggleUser={toggleGroupUser}
         onCreate={createGroupChat}
       />
@@ -1139,10 +1232,19 @@ export default function App() {
 
       <PeerProfileModal
         open={peerProfileOpen}
-        chat={activeChat}
-        messages={messages}
-        onClose={() => setPeerProfileOpen(false)}
+        chat={peerProfileUser ? null : activeChat}
+        user={peerProfileUser}
+        currentUserId={currentUser?.id}
+        messages={peerProfileUser ? [] : messages}
+        onClose={() => {
+          setPeerProfileOpen(false);
+          setPeerProfileUser(null);
+        }}
         onOpenImage={(items, index) => setImageViewer({ items, index })}
+        onUploadChatAvatar={uploadGroupAvatar}
+        onOpenUserProfile={openUserPeerProfile}
+        onStartChat={handlePeerProfileStartChat}
+        onStartCall={handlePeerProfileStartCall}
       />
 
       <ImageViewerModal

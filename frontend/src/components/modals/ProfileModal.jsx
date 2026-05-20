@@ -4,6 +4,7 @@ import {
   FiLogOut,
   FiMail,
   FiMoon,
+  FiPhone,
   FiSettings,
   FiSun,
   FiUser,
@@ -78,6 +79,15 @@ export default function ProfileModal({
           <div className="tg-profile__row-copy">
             <div className="tg-profile__row-label">Почта</div>
             <div className="tg-profile__row-value">{user.email}</div>
+          </div>
+        </div>
+        <div className="tg-profile__row" role="listitem">
+          <div className="tg-profile__row-icon">
+            <FiPhone />
+          </div>
+          <div className="tg-profile__row-copy">
+            <div className="tg-profile__row-label">Телефон</div>
+            <div className="tg-profile__row-value">{user.phone || "Не указан"}</div>
           </div>
         </div>
       </div>

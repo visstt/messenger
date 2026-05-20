@@ -97,6 +97,7 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 		protected.Get("/api/chats", s.handleListChats)
 		protected.Post("/api/chats/private", s.handleCreatePrivateChat)
 		protected.Post("/api/chats/group", s.handleCreateGroupChat)
+		protected.Post("/api/chats/{chatID}/avatar", s.handleUploadChatAvatar)
 		protected.Post("/api/chats/{chatID}/e2ee/enable", s.handleEnableChatE2EE)
 		protected.Post("/api/chats/{chatID}/e2ee/disable", s.handleDisableChatE2EE)
 		protected.Get("/api/chats/{chatID}/messages", s.handleListMessages)
@@ -115,6 +116,7 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 		protected.Post("/api/messages/{messageID}/pin", s.handlePinMessage)
 		protected.Delete("/api/messages/{messageID}/pin", s.handleUnpinMessage)
 		protected.Patch("/api/messages/{messageID}", s.handleEditMessage)
+		protected.Post("/api/messages/{messageID}/reactions", s.handleToggleMessageReaction)
 		protected.Delete("/api/messages/{messageID}", s.handleDeleteMessage)
 		protected.Get("/ws", s.handleWebSocket)
 	})
@@ -349,6 +351,47 @@ func (s *Server) handleCreateGroupChat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.pushChatCreatedEvent(chat, currentUserID(r.Context()))
 	writeJSON(w, http.StatusCreated, map[string]any{"chat": chat})
+}
+
+func (s *Server) handleUploadChatAvatar(w http.ResponseWriter, r *http.Request) {
+	chatID := parseInt64Param(chi.URLParam(r, "chatID"))
+	if chatID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid chat id")
+		return
+	}
+
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid upload")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file is required")
+		return
+	}
+	defer file.Close()
+
+	extension := filepath.Ext(header.Filename)
+	filename := fmt.Sprintf("chat-avatar-%d-%d%s", time.Now().UnixNano(), chatID, extension)
+	publicURL, err := s.uploader.Upload(
+		r.Context(),
+		"avatars/"+filename,
+		file,
+		storage.ContentType(header.Filename, header.Header.Get("Content-Type")),
+	)
+	if err != nil {
+		log.Printf("upload chat avatar failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to save avatar")
+		return
+	}
+
+	chat, err := s.store.UpdateChatAvatar(r.Context(), currentUserID(r.Context()), chatID, publicURL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to update chat avatar")
+		return
+	}
+	s.pushChatCreatedEvent(chat, currentUserID(r.Context()))
+	writeJSON(w, http.StatusOK, map[string]any{"chat": chat})
 }
 
 func (s *Server) handleEnableChatE2EE(w http.ResponseWriter, r *http.Request) {
@@ -787,6 +830,29 @@ func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	msg, recipientIDs, err := s.store.DeleteMessage(r.Context(), currentUserID(r.Context()), messageID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to delete message")
+		return
+	}
+	s.pushMessageEvents(msg, recipientIDs, currentUserID(r.Context()))
+	writeJSON(w, http.StatusOK, map[string]any{"message": msg})
+}
+
+func (s *Server) handleToggleMessageReaction(w http.ResponseWriter, r *http.Request) {
+	messageID := parseInt64Param(chi.URLParam(r, "messageID"))
+	var input struct {
+		Emoji string `json:"emoji"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	msg, recipientIDs, err := s.store.ToggleMessageReaction(
+		r.Context(),
+		currentUserID(r.Context()),
+		messageID,
+		input.Emoji,
+	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to toggle reaction")
 		return
 	}
 	s.pushMessageEvents(msg, recipientIDs, currentUserID(r.Context()))
