@@ -5,5 +5,5 @@ contextBridge.exposeInMainWorld("toastApi", {
     ipcRenderer.on("toast:data", (_event, payload) => callback(payload));
   },
   click: () => ipcRenderer.send("toast:click"),
-  dismiss: () => ipcRenderer.send("toast:dismiss"),
+  dismiss: () => ipcRenderer.invoke("toast:dismiss"),
 });

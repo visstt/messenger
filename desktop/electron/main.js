@@ -70,6 +70,7 @@ let mainWindow = null;
 let tray = null;
 let isQuitting = false;
 const activeToasts = [];
+let toastDismissInterval = null;
 
 if (process.platform === "win32") {
   app.setAppUserModelId("com.messenger.signal.desktop");
@@ -281,11 +282,20 @@ function registerIpcHandlers() {
   });
 
   ipcMain.on("toast:dismiss", (event) => {
-    const entry = activeToasts.find(
-      (item) => item.window.webContents.id === event.sender.id
-    );
-    if (entry) dismissToast(entry);
+    dismissToastByWebContentsId(event.sender.id);
   });
+
+  ipcMain.handle("toast:dismiss", (event) => {
+    dismissToastByWebContentsId(event.sender.id);
+    return true;
+  });
+}
+
+function dismissToastByWebContentsId(webContentsId) {
+  const entry = activeToasts.find(
+    (item) => item.window.webContents.id === webContentsId
+  );
+  if (entry) dismissToast(entry);
 }
 
 function shouldShowNotificationNow() {
@@ -305,37 +315,67 @@ function showMainWindow() {
   mainWindow.focus();
 }
 
-function showToast(payload) {
-  const chatId = payload?.chatId ?? parseChatIdFromTag(payload?.tag);
-
-  const toastWindow = new BrowserWindow({
+function getToastWindowOptions() {
+  const isWin = process.platform === "win32";
+  return {
     width: TOAST_WIDTH,
     height: TOAST_HEIGHT,
     frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
+    transparent: !isWin,
+    backgroundColor: isWin ? "#f3f8fd" : "#00000000",
     hasShadow: true,
     resizable: false,
     movable: false,
     minimizable: false,
     maximizable: false,
-    closable: false,
+    closable: true,
     skipTaskbar: true,
     alwaysOnTop: true,
-    focusable: false,
+    focusable: true,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "toast-preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
     },
-  });
+  };
+}
+
+function ensureToastDismissScheduler() {
+  if (toastDismissInterval) return;
+  toastDismissInterval = setInterval(() => {
+    const now = Date.now();
+    [...activeToasts].forEach((entry) => {
+      if (entry.expiresAt && now >= entry.expiresAt) {
+        dismissToast(entry);
+      }
+    });
+    if (activeToasts.length === 0 && toastDismissInterval) {
+      clearInterval(toastDismissInterval);
+      toastDismissInterval = null;
+    }
+  }, 300);
+}
+
+function scheduleToastExpiry(entry) {
+  entry.expiresAt = Date.now() + TOAST_LIFETIME_MS;
+  ensureToastDismissScheduler();
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = setTimeout(() => {
+    if (!entry.window.isDestroyed()) dismissToast(entry);
+  }, TOAST_LIFETIME_MS);
+}
+
+function showToast(payload) {
+  const chatId = payload?.chatId ?? parseChatIdFromTag(payload?.tag);
+  const toastWindow = new BrowserWindow(getToastWindowOptions());
 
   const entry = {
     window: toastWindow,
     chatId,
     timer: null,
+    expiresAt: null,
   };
 
   activeToasts.unshift(entry);
@@ -346,10 +386,15 @@ function showToast(payload) {
       clearTimeout(entry.timer);
       entry.timer = null;
     }
+    entry.expiresAt = null;
     const index = activeToasts.indexOf(entry);
     if (index >= 0) {
       activeToasts.splice(index, 1);
       layoutToasts();
+    }
+    if (activeToasts.length === 0 && toastDismissInterval) {
+      clearInterval(toastDismissInterval);
+      toastDismissInterval = null;
     }
   });
 
@@ -367,16 +412,8 @@ function showToast(payload) {
       body: payload?.body || "",
     });
     layoutToasts();
-    if (process.platform === "win32") {
-      toastWindow.show();
-    } else {
-      toastWindow.showInactive();
-    }
-
-    if (entry.timer) clearTimeout(entry.timer);
-    entry.timer = setTimeout(() => {
-      if (!entry.window.isDestroyed()) dismissToast(entry);
-    }, TOAST_LIFETIME_MS);
+    toastWindow.showInactive();
+    scheduleToastExpiry(entry);
   });
 }
 
@@ -410,13 +447,18 @@ function dismissToast(entry) {
     clearTimeout(entry.timer);
     entry.timer = null;
   }
+  entry.expiresAt = null;
   const index = activeToasts.indexOf(entry);
   if (index >= 0) activeToasts.splice(index, 1);
   if (!entry.window.isDestroyed()) {
     entry.window.removeAllListeners("closed");
-    entry.window.close();
+    entry.window.destroy();
   }
   layoutToasts();
+  if (activeToasts.length === 0 && toastDismissInterval) {
+    clearInterval(toastDismissInterval);
+    toastDismissInterval = null;
+  }
 }
 
 function trimToasts() {
