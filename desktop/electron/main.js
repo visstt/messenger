@@ -340,17 +340,34 @@ function showToast(payload) {
   activeToasts.unshift(entry);
   trimToasts();
 
+  toastWindow.on("closed", () => {
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+    const index = activeToasts.indexOf(entry);
+    if (index >= 0) {
+      activeToasts.splice(index, 1);
+      layoutToasts();
+    }
+  });
+
   toastWindow.loadFile(path.join(__dirname, "toast.html"));
   toastWindow.webContents.once("did-finish-load", () => {
+    if (toastWindow.isDestroyed()) return;
+
     toastWindow.webContents.send("toast:data", {
       title: payload?.title || "Signal",
       body: payload?.body || "",
     });
     layoutToasts();
     toastWindow.showInactive();
-  });
 
-  entry.timer = setTimeout(() => dismissToast(entry), TOAST_LIFETIME_MS);
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = setTimeout(() => {
+      if (!entry.window.isDestroyed()) dismissToast(entry);
+    }, TOAST_LIFETIME_MS);
+  });
 }
 
 function parseChatIdFromTag(tag) {
@@ -379,10 +396,16 @@ function layoutToasts() {
 
 function dismissToast(entry) {
   if (!entry) return;
-  if (entry.timer) clearTimeout(entry.timer);
+  if (entry.timer) {
+    clearTimeout(entry.timer);
+    entry.timer = null;
+  }
   const index = activeToasts.indexOf(entry);
   if (index >= 0) activeToasts.splice(index, 1);
-  if (!entry.window.isDestroyed()) entry.window.close();
+  if (!entry.window.isDestroyed()) {
+    entry.window.removeAllListeners("closed");
+    entry.window.destroy();
+  }
   layoutToasts();
 }
 

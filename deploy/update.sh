@@ -29,9 +29,20 @@ sync_env() {
 }
 
 git_pull() {
-  if [[ -d "$ROOT/.git" ]]; then
-    log "git pull"
-    git pull --ff-only || warn "git pull не удался — продолжаем с текущими файлами"
+  if [[ ! -d "$ROOT/.git" ]]; then
+    return 0
+  fi
+
+  log "git pull"
+  cd "$ROOT"
+
+  if [[ -n "$(git status --porcelain deploy/ 2>/dev/null)" ]]; then
+    warn "Локальные правки в deploy/ будут сброшены (на VPS не редактируйте эти файлы)"
+    git checkout -- deploy/ 2>/dev/null || true
+  fi
+
+  if ! git pull --ff-only; then
+    warn "git pull не удался — продолжаем с текущими файлами"
   fi
 }
 
