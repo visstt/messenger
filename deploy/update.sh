@@ -82,9 +82,16 @@ docker_deploy() {
     exit 1
   fi
 
-  $COMPOSE --env-file "$ROOT/.env" build --pull
-  $COMPOSE --env-file "$ROOT/.env" up -d --remove-orphans
-  $COMPOSE ps
+  COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.prod.yml)
+
+  $COMPOSE --env-file "$ROOT/.env" "${COMPOSE_FILES[@]}" build --pull
+  $COMPOSE --env-file "$ROOT/.env" "${COMPOSE_FILES[@]}" up -d --remove-orphans --force-recreate
+  $COMPOSE --env-file "$ROOT/.env" "${COMPOSE_FILES[@]}" ps
+
+  log "Проверка переменных backend"
+  $COMPOSE --env-file "$ROOT/.env" "${COMPOSE_FILES[@]}" exec -T backend sh -c \
+    'echo APP_ORIGIN=$APP_ORIGIN; echo LIVEKIT_PUBLIC_URL=$LIVEKIT_PUBLIC_URL' || \
+    warn "Не удалось прочитать env из контейнера backend"
 }
 
 health_hint() {

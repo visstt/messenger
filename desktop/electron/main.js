@@ -16,18 +16,36 @@ const PRODUCTION_SERVER_URL = "https://chat.5-35-88-205.sslip.io";
 const store = new Store({
   defaults: {
     notificationsEnabled: true,
-    serverUrl: getDefaultServerUrl(),
+    serverUrl: "http://localhost:3020",
   },
 });
 
-function getDefaultServerUrl() {
+function readPackagedServerUrl() {
   if (process.env.MESSENGER_URL) {
     return process.env.MESSENGER_URL.replace(/\/$/, "");
   }
-  if (app.isPackaged) {
-    return PRODUCTION_SERVER_URL;
+  try {
+    const buildConfig = require("./build-config.json");
+    if (buildConfig?.serverUrl) {
+      return String(buildConfig.serverUrl).replace(/\/$/, "");
+    }
+  } catch {
+    // build-config.json создаётся при npm run dist
   }
-  return "http://localhost:3020";
+  return PRODUCTION_SERVER_URL;
+}
+
+function isLocalServerUrl(url) {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/i.test(String(url || "").trim());
+}
+
+function migrateStoredServerUrl() {
+  if (!app.isPackaged) return;
+  const target = readPackagedServerUrl();
+  const stored = store.get("serverUrl");
+  if (!stored || isLocalServerUrl(stored) || stored !== target) {
+    store.set("serverUrl", target);
+  }
 }
 
 function getAssetsDir() {
@@ -67,6 +85,7 @@ if (!gotLock) {
 }
 
 app.whenReady().then(() => {
+  migrateStoredServerUrl();
   createMainWindow();
   createTray();
   registerIpcHandlers();
@@ -85,10 +104,13 @@ app.on("activate", () => {
 });
 
 function getServerUrl() {
+  if (app.isPackaged) {
+    return readPackagedServerUrl();
+  }
   return (
     process.env.MESSENGER_URL ||
     store.get("serverUrl") ||
-    getDefaultServerUrl()
+    "http://localhost:3020"
   ).replace(/\/$/, "");
 }
 

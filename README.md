@@ -43,18 +43,19 @@ bash deploy/update.sh
 
 Порты compose: frontend **3020**, backend **9080**, LiveKit **7880** (проксируются nginx).
 
-### Кнопка «Скачать для ПК»
+### Desktop и иконки (только с Windows)
 
-Установщик собирается **на Windows**, затем снова деплой:
+Закройте Signal, затем:
 
 ```powershell
-# в репозитории на ПК
-powershell -ExecutionPolicy Bypass -File deploy/build-desktop.ps1
-# залить frontend/public/downloads/Signal-Desktop-Setup.exe на сервер (git/rsync)
-bash deploy/update.sh
+powershell -ExecutionPolicy Bypass -File deploy/release-windows.ps1
 ```
 
-Установленный desktop по умолчанию открывает `https://chat.5-35-88-205.sslip.io`.
+Залейте на сервер `frontend/public/downloads/Signal-Desktop-Setup.exe` и выполните `bash deploy/update.sh`. На ПК **переустановите** приложение из нового Setup.exe.
+
+### Если на сервере в API/звонках всё ещё `localhost`
+
+На VPS обязательно `bash deploy/update.sh` — скрипт пересоздаёт контейнеры и печатает `APP_ORIGIN` / `LIVEKIT_PUBLIC_URL`. Должно быть `https://chat...` и `wss://livekit...`, не `localhost`.
 
 ## Конфигурация
 

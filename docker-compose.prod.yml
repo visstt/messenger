@@ -1,0 +1,8 @@
+# Подключается на VPS: docker compose -f docker-compose.yml -f docker-compose.prod.yml
+services:
+  backend:
+    env_file:
+      - .env
+  livekit:
+    env_file:
+      - .env

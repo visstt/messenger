@@ -6,8 +6,7 @@ $DesktopDir = Join-Path $PSScriptRoot ".." "desktop"
 Push-Location $DesktopDir
 try {
   $env:MESSENGER_URL = $ProductionUrl
-  npm run dist
-  npm run publish-installer
+  npm run release
   Write-Host "OK: installer → frontend/public/downloads/Signal-Desktop-Setup.exe"
   Write-Host "Залейте на сервер и выполните: bash deploy/update.sh"
 }

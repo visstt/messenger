@@ -9,8 +9,9 @@
     "start": "electron .",
     "dev": "electron .",
     "pack": "electron-builder --dir",
-    "dist": "npm run icons && electron-builder --win",
+    "dist": "npm run icons && node scripts/write-build-config.cjs && electron-builder --win",
     "dist:prod": "cross-env MESSENGER_URL=https://chat.5-35-88-205.sslip.io npm run dist",
+    "release": "npm run dist:prod && npm run publish-installer",
     "dist:unsigned": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win",
     "icons": "node scripts/generate-icons.mjs",
     "publish-installer": "node scripts/publish-installer.mjs"

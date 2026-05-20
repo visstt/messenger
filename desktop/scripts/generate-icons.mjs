@@ -29,7 +29,13 @@ await sharp(svg).resize(16, 16).png().toFile(path.join(assetsDir, "tray-16.png")
 const iconIco = await toIco(appPngBuffers);
 const trayIco = await toIco(trayPngBuffers);
 
+const publicDir = path.join(root, "..", "frontend", "public");
+await fs.mkdir(publicDir, { recursive: true });
+
 await fs.writeFile(path.join(assetsDir, "icon.ico"), iconIco);
 await fs.writeFile(path.join(assetsDir, "tray.ico"), trayIco);
+await fs.writeFile(path.join(publicDir, "favicon.ico"), iconIco);
 
-console.log("Generated: icon.ico, tray.ico, icon.png, tray-16.png, tray-32.png");
+console.log(
+  "Generated: icon.ico, tray.ico, icon.png, tray-16.png, tray-32.png, frontend/public/favicon.ico"
+);
