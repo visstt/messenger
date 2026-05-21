@@ -37,6 +37,7 @@ import {
   readPendingJoinToken,
   rememberJoinTokenFromUrl,
 } from "./utils/groupInvite";
+import { formatRuPhoneInput } from "./utils/phoneMask";
 
 const emptyProfile = { name: "", username: "", phone: "", bio: "", avatarUrl: "" };
 
@@ -492,7 +493,7 @@ export default function App() {
     setProfileDraft({
       name: user.name,
       username: user.username,
-      phone: user.phone || "",
+      phone: formatRuPhoneInput(user.phone || ""),
       bio: user.bio,
       avatarUrl: user.avatarUrl,
     });

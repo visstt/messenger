@@ -1,6 +1,7 @@
 import { FiUpload, FiX } from "react-icons/fi";
 import Avatar from "../Avatar";
 import { Button, Input, Modal, Textarea } from "../../ui";
+import { formatRuPhoneInput } from "../../utils/phoneMask";
 
 export default function ProfileEditorModal({
   open,
@@ -43,9 +44,14 @@ export default function ProfileEditorModal({
           onChange={(event) => onChange((prev) => ({ ...prev, username: event.target.value }))}
         />
         <Input
-          placeholder="Телефон (опционально)"
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          placeholder="+7 (999) 999-99-99"
           value={draft.phone || ""}
-          onChange={(event) => onChange((prev) => ({ ...prev, phone: event.target.value }))}
+          onChange={(event) =>
+            onChange((prev) => ({ ...prev, phone: formatRuPhoneInput(event.target.value) }))
+          }
         />
         <Textarea
           rows="4"

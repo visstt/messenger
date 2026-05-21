@@ -9,6 +9,7 @@ import {
 } from "react-icons/fi";
 import Avatar from "../Avatar";
 import { Button, IconButton, Modal } from "../../ui";
+import { formatRuPhoneInput } from "../../utils/phoneMask";
 
 export default function ProfileModal({
   open,
@@ -89,7 +90,9 @@ export default function ProfileModal({
           </div>
           <div className="tg-profile__row-copy">
             <div className="tg-profile__row-label">Телефон</div>
-            <div className="tg-profile__row-value">{user.phone || "Не указан"}</div>
+            <div className="tg-profile__row-value">
+              {user.phone ? formatRuPhoneInput(user.phone) : "Не указан"}
+            </div>
           </div>
         </div>
       </div>

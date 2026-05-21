@@ -17,6 +17,7 @@ import Avatar from "../Avatar";
 import VideoCircle from "../VideoCircle";
 import { formatClock, parseAttachmentItems, parseImageItems } from "../../utils/messages";
 import { getChatAvatar, getChatSubtitle, getChatTitle } from "../../utils/chats";
+import { formatRuPhoneInput } from "../../utils/phoneMask";
 import { Button, Modal } from "../../ui";
 
 const MEDIA_TABS = [
@@ -194,7 +195,7 @@ export default function PeerProfileModal({
           <div className="tg-peer-user-fields__row" role="listitem">
             <span className="tg-peer-user-fields__label">Телефон</span>
             <strong className="tg-peer-user-fields__value">
-              {displayUser?.phone || "Не указан"}
+              {displayUser?.phone ? formatRuPhoneInput(displayUser.phone) : "Не указан"}
             </strong>
           </div>
         </div>
