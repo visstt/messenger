@@ -665,7 +665,12 @@ export default function App() {
 
   async function openPrivateChat(userId, options = {}) {
     const { closeSearch = false } = options;
-    const data = await api.createPrivateChat(userId);
+    const normalizedUserId = Number(userId);
+    if (!normalizedUserId) {
+      throw new Error("Не удалось определить пользователя");
+    }
+
+    const data = await api.createPrivateChat(normalizedUserId);
 
     if (closeSearch) {
       setSearchOpen(false);
@@ -673,8 +678,8 @@ export default function App() {
       setSearchResults([]);
     }
 
-    await fetchChats(data.chat.id);
     await openChat(data.chat.id, { markRead: true, forceScroll: true });
+    await fetchChats(data.chat.id);
     return data.chat;
   }
 

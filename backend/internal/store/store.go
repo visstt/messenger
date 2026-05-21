@@ -784,12 +784,14 @@ func (s *Store) ListChatParticipants(ctx context.Context, chatID int64) ([]User,
 	return users, rows.Err()
 }
 
-// DeleteEmptyPrivateChats removes private dialogs with no messages for this user.
+// DeleteEmptyPrivateChats removes stale private dialogs with no messages for this user.
+// Recently created empty chats are kept so "start chat" can open before the first message.
 func (s *Store) DeleteEmptyPrivateChats(ctx context.Context, currentUserID int64) error {
 	_, err := s.db.Exec(ctx, `
 		DELETE FROM chats c
 		WHERE c.kind = 'private'
 		  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = c.id)
+		  AND c.updated_at < NOW() - INTERVAL '1 hour'
 		  AND EXISTS (
 		    SELECT 1 FROM chat_participants cp
 		    WHERE cp.chat_id = c.id AND cp.user_id = $1
