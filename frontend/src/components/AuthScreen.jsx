@@ -29,7 +29,16 @@ export default function AuthScreen({ authMode, error, onModeChange, onSubmit }) 
           {authMode === "register" && (
             <>
               <Input name="name" placeholder="Имя" required />
-              <Input name="username" placeholder="Имя пользователя" required />
+              <Input
+                name="username"
+                placeholder="Имя пользователя (латиница, цифры, _)"
+                autoComplete="username"
+                required
+                minLength={3}
+                maxLength={32}
+                pattern="[A-Za-z0-9_]{3,32}"
+                title="3–32 символа: латинские буквы, цифры, подчёркивание, без пробелов"
+              />
               <Input name="email" type="email" placeholder="Почта" required />
             </>
           )}

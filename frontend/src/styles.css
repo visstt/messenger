@@ -1412,6 +1412,12 @@ button {
   min-height: 0;
   align-content: start;
   background: var(--tg-chat-bg);
+  overflow-anchor: none;
+}
+
+.message-list-anchor {
+  height: 1px;
+  overflow-anchor: auto;
 }
 
 .pinned-message-bar {

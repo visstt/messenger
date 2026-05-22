@@ -132,14 +132,26 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	input = store.NormalizeRegistration(input)
 	if err := store.ValidateRegistration(input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	if conflict, err := s.store.RegistrationConflict(r.Context(), input.Username, input.Email); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check registration")
+		return
+	} else if conflict == "username" {
+		writeError(w, http.StatusBadRequest, "это имя пользователя уже занято")
+		return
+	} else if conflict == "email" {
+		writeError(w, http.StatusBadRequest, "эта почта уже зарегистрирована — попробуйте войти")
+		return
+	}
+
 	user, err := s.store.CreateUser(r.Context(), input)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "username or email already exists")
+		writeError(w, http.StatusBadRequest, store.MapCreateUserError(err))
 		return
 	}
 	s.setSession(w, user.ID)

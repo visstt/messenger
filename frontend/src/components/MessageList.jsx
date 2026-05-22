@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { VoiceVisualizer, useVoiceVisualizer } from "react-voice-visualizer";
 import {
@@ -39,9 +39,11 @@ export default function MessageList({
   onJoinGroupInvite,
   forceScroll,
 }) {
+  const listRef = useRef(null);
   const bottomRef = useRef(null);
   const stayPinnedRef = useRef(true);
   const previousChatIdRef = useRef(chatId);
+  const pendingInstantScrollRef = useRef(false);
   const longPressTimerRef = useRef(null);
   const [contextMenu, setContextMenu] = useState(null);
   const displayMessages = useMemo(() => groupMessages(messages), [messages]);
@@ -62,14 +64,51 @@ export default function MessageList({
     if (previousChatIdRef.current !== chatId) {
       previousChatIdRef.current = chatId;
       stayPinnedRef.current = true;
+      pendingInstantScrollRef.current = true;
     }
   }, [chatId]);
 
   useEffect(() => {
-    if (forceScroll || stayPinnedRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (forceScroll) {
+      pendingInstantScrollRef.current = true;
     }
-  }, [messages, forceScroll]);
+  }, [forceScroll, chatId]);
+
+  useLayoutEffect(() => {
+    if (!stayPinnedRef.current && !pendingInstantScrollRef.current) return;
+
+    const node = listRef.current;
+    if (!node) return;
+
+    const jumpToBottom = () => {
+      node.scrollTop = node.scrollHeight;
+    };
+
+    jumpToBottom();
+
+    if (!pendingInstantScrollRef.current) return;
+
+    requestAnimationFrame(() => {
+      jumpToBottom();
+      requestAnimationFrame(() => {
+        jumpToBottom();
+        pendingInstantScrollRef.current = false;
+      });
+    });
+  }, [displayMessages, chatId]);
+
+  useEffect(() => {
+    const node = listRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return undefined;
+
+    const observer = new ResizeObserver(() => {
+      if (!stayPinnedRef.current) return;
+      node.scrollTop = node.scrollHeight;
+    });
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [chatId]);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -122,6 +161,7 @@ export default function MessageList({
 
   return (
     <section
+      ref={listRef}
       className="message-list"
       onContextMenu={(event) => event.preventDefault()}
       onScroll={(event) => {
@@ -269,7 +309,7 @@ export default function MessageList({
           </article>
         );
       })}
-      <div ref={bottomRef} />
+      <div ref={bottomRef} className="message-list-anchor" aria-hidden="true" />
       {contextMenu &&
         createPortal(
           <div

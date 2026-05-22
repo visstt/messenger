@@ -261,6 +261,8 @@ func (s *Store) SeedDemoData(ctx context.Context) error {
 }
 
 func (s *Store) CreateUser(ctx context.Context, input Credentials) (User, error) {
+	input = NormalizeRegistration(input)
+
 	hash, err := auth.HashPassword(input.Password)
 	if err != nil {
 		return User{}, err
@@ -271,7 +273,7 @@ func (s *Store) CreateUser(ctx context.Context, input Credentials) (User, error)
 		INSERT INTO users (name, username, email, password_hash)
 		VALUES ($1, LOWER($2), LOWER($3), $4)
 		RETURNING id, name, username, email, phone, bio, avatar_url, public_key, created_at
-	`, strings.TrimSpace(input.Name), strings.TrimSpace(input.Username), strings.TrimSpace(input.Email), hash).
+	`, input.Name, input.Username, input.Email, hash).
 		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.CreatedAt)
 	return user, err
 }
@@ -1445,18 +1447,3 @@ func derefTime(v *time.Time) time.Time {
 	return *v
 }
 
-func ValidateRegistration(input Credentials) error {
-	if strings.TrimSpace(input.Name) == "" {
-		return fmt.Errorf("name is required")
-	}
-	if strings.TrimSpace(input.Username) == "" {
-		return fmt.Errorf("username is required")
-	}
-	if strings.TrimSpace(input.Email) == "" {
-		return fmt.Errorf("email is required")
-	}
-	if len(strings.TrimSpace(input.Password)) < 8 {
-		return fmt.Errorf("password must be at least 8 characters")
-	}
-	return nil
-}
