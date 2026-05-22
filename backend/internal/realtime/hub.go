@@ -21,27 +21,37 @@ func NewHub() *Hub {
 	return &Hub{clients: make(map[int64]map[*websocket.Conn]struct{})}
 }
 
-func (h *Hub) Register(userID int64, conn *websocket.Conn) {
+func (h *Hub) Register(userID int64, conn *websocket.Conn) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if _, ok := h.clients[userID]; !ok {
+	conns, ok := h.clients[userID]
+	wasOnline := ok && len(conns) > 0
+	if !ok {
 		h.clients[userID] = make(map[*websocket.Conn]struct{})
 	}
 	h.clients[userID][conn] = struct{}{}
+	return !wasOnline
 }
 
-func (h *Hub) Unregister(userID int64, conn *websocket.Conn) {
+func (h *Hub) Unregister(userID int64, conn *websocket.Conn) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if conns, ok := h.clients[userID]; ok {
-		delete(conns, conn)
-		if len(conns) == 0 {
-			delete(h.clients, userID)
-		}
+	conns, ok := h.clients[userID]
+	if !ok {
+		_ = conn.Close()
+		return false
 	}
+
+	delete(conns, conn)
 	_ = conn.Close()
+	if len(conns) > 0 {
+		return false
+	}
+
+	delete(h.clients, userID)
+	return true
 }
 
 func (h *Hub) BroadcastToUser(userID int64, event Event) {

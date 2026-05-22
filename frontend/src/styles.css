@@ -1385,6 +1385,28 @@ button {
   white-space: nowrap;
 }
 
+.chat-presence--online {
+  color: var(--accent);
+}
+
+.avatar-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.avatar-online-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: #3ddc84;
+  border: 2px solid var(--tg-header-bg, var(--panel));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
 .chat-header-side {
   gap: 10px;
 }

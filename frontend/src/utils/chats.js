@@ -1,3 +1,5 @@
+import { getPrivateChatPresenceLabel } from "./presence";
+
 export function getChatTitle(chat) {
   if (!chat) return "";
   if (chat.kind === "group") return chat.title || "Групповой чат";
@@ -10,6 +12,8 @@ export function getChatSubtitle(chat) {
     const count = chat.participants?.length || 0;
     return `${count} участников`;
   }
+  const presence = getPrivateChatPresenceLabel(chat);
+  if (presence) return presence;
   return chat.peer?.username ? `@${chat.peer.username}` : "личный диалог";
 }
 

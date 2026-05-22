@@ -22,9 +22,6 @@ type Config struct {
 	LiveKitPublicURL string
 	LiveKitAPIKey    string
 	LiveKitAPISecret string
-	MailerSendAPIKey string
-	MailerSendFrom   string
-	MailerSendName   string
 }
 
 func Load() Config {
@@ -45,9 +42,6 @@ func Load() Config {
 		LiveKitPublicURL: env("LIVEKIT_PUBLIC_URL", "ws://localhost:7880"),
 		LiveKitAPIKey:    env("LIVEKIT_API_KEY", "devkey"),
 		LiveKitAPISecret: env("LIVEKIT_API_SECRET", "secret"),
-		MailerSendAPIKey: env("MAILERSEND_API_KEY", ""),
-		MailerSendFrom:   env("MAILERSEND_FROM_EMAIL", ""),
-		MailerSendName:   env("MAILERSEND_FROM_NAME", "Signal"),
 	}
 }
 

@@ -27,9 +27,10 @@ type User struct {
 	Phone     string    `json:"phone"`
 	Bio       string    `json:"bio"`
 	AvatarURL string    `json:"avatarUrl"`
-	PublicKey      string    `json:"publicKey"`
-	EmailVerified  bool      `json:"emailVerified"`
-	CreatedAt      time.Time `json:"createdAt"`
+	PublicKey      string     `json:"publicKey"`
+	LastSeenAt     *time.Time `json:"lastSeenAt,omitempty"`
+	Online         bool       `json:"online,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
 }
 
 type Message struct {
@@ -190,18 +191,8 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS encryption_meta TEXT NOT NULL DEFA
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS invite_token TEXT NOT NULL DEFAULT '';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_invite_token ON chats(invite_token) WHERE invite_token <> '';
-ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
-UPDATE users SET email_verified = TRUE WHERE email_verified = FALSE;
-CREATE TABLE IF NOT EXISTS email_tokens (
-	id BIGSERIAL PRIMARY KEY,
-	user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-	purpose TEXT NOT NULL,
-	token_hash TEXT NOT NULL,
-	expires_at TIMESTAMPTZ NOT NULL,
-	used_at TIMESTAMPTZ,
-	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_email_tokens_lookup ON email_tokens(user_id, purpose, expires_at);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+DROP TABLE IF EXISTS email_tokens;
 `
 	_, err := s.db.Exec(ctx, schema)
 	return err
@@ -233,15 +224,15 @@ func (s *Store) SeedDemoData(ctx context.Context) error {
 
 	var aliceID, bobID int64
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO users (name, username, email, password_hash, bio, avatar_url, email_verified)
-		VALUES ('Alice Martin', 'alice', 'alice@example.com', $1, 'Product designer and early demo user.', '', TRUE)
+		INSERT INTO users (name, username, email, password_hash, bio, avatar_url)
+		VALUES ('Alice Martin', 'alice', 'alice@example.com', $1, 'Product designer and early demo user.', '')
 		RETURNING id
 	`, hashAlice).Scan(&aliceID); err != nil {
 		return err
 	}
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO users (name, username, email, password_hash, bio, avatar_url, email_verified)
-		VALUES ('Bob Carter', 'bob', 'bob@example.com', $1, 'Backend engineer who likes concise chats.', '', TRUE)
+		INSERT INTO users (name, username, email, password_hash, bio, avatar_url)
+		VALUES ('Bob Carter', 'bob', 'bob@example.com', $1, 'Backend engineer who likes concise chats.', '')
 		RETURNING id
 	`, hashBob).Scan(&bobID); err != nil {
 		return err
@@ -281,25 +272,25 @@ func (s *Store) CreateUser(ctx context.Context, input Credentials) (User, error)
 		return User{}, err
 	}
 
-	var user User
-	err = s.db.QueryRow(ctx, `
-		INSERT INTO users (name, username, email, password_hash, email_verified)
-		VALUES ($1, LOWER($2), LOWER($3), $4, FALSE)
-		RETURNING id, name, username, email, phone, bio, avatar_url, public_key, email_verified, created_at
-	`, input.Name, input.Username, input.Email, hash).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.EmailVerified, &user.CreatedAt)
-	return user, err
+	row := s.db.QueryRow(ctx, `
+		INSERT INTO users (name, username, email, password_hash)
+		VALUES ($1, $2, LOWER($3), $4)
+		RETURNING `+userSelectColumns+`
+	`, input.Name, input.Username, input.Email, hash)
+	return scanUserRow(row)
 }
 
 func (s *Store) AuthenticateUser(ctx context.Context, identifier, password string) (User, error) {
 	var user User
+	var lastSeen *time.Time
 	var passwordHash string
 	err := s.db.QueryRow(ctx, `
-		SELECT id, name, username, email, phone, bio, avatar_url, public_key, email_verified, created_at, password_hash
+		SELECT `+userSelectColumns+`, password_hash
 		FROM users
 		WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
 	`, strings.TrimSpace(identifier)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.EmailVerified, &user.CreatedAt, &passwordHash)
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &lastSeen, &user.CreatedAt, &passwordHash)
+	user.LastSeenAt = lastSeen
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrNotFound
@@ -309,20 +300,16 @@ func (s *Store) AuthenticateUser(ctx context.Context, identifier, password strin
 	if !auth.CheckPassword(passwordHash, password) {
 		return User{}, ErrForbidden
 	}
-	if !user.EmailVerified {
-		return User{}, ErrEmailNotVerified
-	}
 	return user, nil
 }
 
 func (s *Store) GetUserByIdentifier(ctx context.Context, identifier string) (User, error) {
-	var user User
-	err := s.db.QueryRow(ctx, `
-		SELECT id, name, username, email, phone, bio, avatar_url, public_key, email_verified, created_at
+	row := s.db.QueryRow(ctx, `
+		SELECT `+userSelectColumns+`
 		FROM users
 		WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
-	`, strings.TrimSpace(identifier)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.EmailVerified, &user.CreatedAt)
+	`, strings.TrimSpace(identifier))
+	user, err := scanUserRow(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrNotFound
@@ -333,12 +320,12 @@ func (s *Store) GetUserByIdentifier(ctx context.Context, identifier string) (Use
 }
 
 func (s *Store) GetUserByID(ctx context.Context, userID int64) (User, error) {
-	var user User
-	err := s.db.QueryRow(ctx, `
-		SELECT id, name, username, email, phone, bio, avatar_url, public_key, email_verified, created_at
+	row := s.db.QueryRow(ctx, `
+		SELECT `+userSelectColumns+`
 		FROM users
 		WHERE id = $1
-	`, userID).Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.EmailVerified, &user.CreatedAt)
+	`, userID)
+	user, err := scanUserRow(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrNotFound
@@ -350,7 +337,7 @@ func (s *Store) GetUserByID(ctx context.Context, userID int64) (User, error) {
 
 func (s *Store) SearchUsers(ctx context.Context, currentUserID int64, query string) ([]User, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, name, username, email, phone, bio, avatar_url, public_key, email_verified, created_at
+		SELECT `+userSelectColumns+`
 		FROM users
 		WHERE id <> $1
 		  AND (
@@ -368,8 +355,8 @@ func (s *Store) SearchUsers(ctx context.Context, currentUserID int64, query stri
 
 	var users []User
 	for rows.Next() {
-		var user User
-		if err := rows.Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.EmailVerified, &user.CreatedAt); err != nil {
+		user, err := scanUserRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -378,8 +365,7 @@ func (s *Store) SearchUsers(ctx context.Context, currentUserID int64, query stri
 }
 
 func (s *Store) UpdateProfile(ctx context.Context, userID int64, input ProfileUpdate) (User, error) {
-	var user User
-	err := s.db.QueryRow(ctx, `
+	row := s.db.QueryRow(ctx, `
 		UPDATE users
 		SET name = $2,
 			username = LOWER($3),
@@ -387,34 +373,29 @@ func (s *Store) UpdateProfile(ctx context.Context, userID int64, input ProfileUp
 			bio = $5,
 			avatar_url = $6
 		WHERE id = $1
-		RETURNING id, name, username, email, phone, bio, avatar_url, public_key, email_verified, created_at
-	`, userID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Username), strings.TrimSpace(input.Phone), strings.TrimSpace(input.Bio), strings.TrimSpace(input.AvatarURL)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.EmailVerified, &user.CreatedAt)
-	return user, err
+		RETURNING `+userSelectColumns+`
+	`, userID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Username), strings.TrimSpace(input.Phone), strings.TrimSpace(input.Bio), strings.TrimSpace(input.AvatarURL))
+	return scanUserRow(row)
 }
 
 func (s *Store) UpdateAvatar(ctx context.Context, userID int64, avatarURL string) (User, error) {
-	var user User
-	err := s.db.QueryRow(ctx, `
+	row := s.db.QueryRow(ctx, `
 		UPDATE users
 		SET avatar_url = $2
 		WHERE id = $1
-		RETURNING id, name, username, email, phone, bio, avatar_url, public_key, email_verified, created_at
-	`, userID, strings.TrimSpace(avatarURL)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.EmailVerified, &user.CreatedAt)
-	return user, err
+		RETURNING `+userSelectColumns+`
+	`, userID, strings.TrimSpace(avatarURL))
+	return scanUserRow(row)
 }
 
 func (s *Store) UpdatePublicKey(ctx context.Context, userID int64, publicKey string) (User, error) {
-	var user User
-	err := s.db.QueryRow(ctx, `
+	row := s.db.QueryRow(ctx, `
 		UPDATE users
 		SET public_key = $2
 		WHERE id = $1
-		RETURNING id, name, username, email, phone, bio, avatar_url, public_key, email_verified, created_at
-	`, userID, strings.TrimSpace(publicKey)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.EmailVerified, &user.CreatedAt)
-	return user, err
+		RETURNING `+userSelectColumns+`
+	`, userID, strings.TrimSpace(publicKey))
+	return scanUserRow(row)
 }
 
 func (s *Store) EnableChatE2EE(ctx context.Context, currentUserID, chatID int64) (ChatDetails, Message, []int64, bool, error) {
@@ -797,7 +778,7 @@ func (s *Store) GetChatDetails(ctx context.Context, currentUserID, chatID int64)
 
 func (s *Store) ListChatParticipants(ctx context.Context, chatID int64) ([]User, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT u.id, u.name, u.username, u.email, u.phone, u.bio, u.avatar_url, u.public_key, u.email_verified, u.created_at
+		SELECT u.id, u.name, u.username, u.email, u.phone, u.bio, u.avatar_url, u.public_key, u.last_seen_at, u.created_at
 		FROM chat_participants cp
 		JOIN users u ON u.id = cp.user_id
 		WHERE cp.chat_id = $1
@@ -810,8 +791,8 @@ func (s *Store) ListChatParticipants(ctx context.Context, chatID int64) ([]User,
 
 	var users []User
 	for rows.Next() {
-		var user User
-		if err := rows.Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &user.EmailVerified, &user.CreatedAt); err != nil {
+		user, err := scanUserRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -850,7 +831,7 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 			c.updated_at,
 			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec, m.encrypted_payload, m.encryption_meta,
 			m.reply_to_message_id, m.pinned_at, m.edited_at, m.deleted_at, m.created_at,
-			su.id, su.name, su.username, su.email, su.phone, su.bio, su.avatar_url, su.public_key, su.email_verified, su.created_at,
+			su.id, su.name, su.username, su.email, su.phone, su.bio, su.avatar_url, su.public_key, su.created_at,
 			COALESCE((
 				SELECT COUNT(*)
 				FROM messages unread
@@ -891,7 +872,6 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 		var pinnedAt, editedAt, deletedAt, messageCreatedAt *time.Time
 		var senderID *int64
 		var senderName, senderUsername, senderEmail, senderPhone, senderBio, senderAvatar, senderPublicKey *string
-		var senderEmailVerified *bool
 		var senderCreatedAt *time.Time
 		var peerLastRead int64
 
@@ -904,7 +884,7 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 			&preview.UpdatedAt,
 			&lastMessageID, &lastMessageChatID, &lastMessageSenderID, &lastMessageKind, &lastMessageText, &lastMessageFileURL, &lastMessageFileName, &lastMessageDuration, &lastMessageEncryptedPayload, &lastMessageEncryptionMeta,
 			&replyTo, &pinnedAt, &editedAt, &deletedAt, &messageCreatedAt,
-			&senderID, &senderName, &senderUsername, &senderEmail, &senderPhone, &senderBio, &senderAvatar, &senderPublicKey, &senderEmailVerified, &senderCreatedAt,
+			&senderID, &senderName, &senderUsername, &senderEmail, &senderPhone, &senderBio, &senderAvatar, &senderPublicKey, &senderCreatedAt,
 			&preview.UnreadCount,
 			&peerLastRead,
 		); err != nil {
@@ -936,7 +916,6 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 					Name:          derefString(senderName),
 					Username:      derefString(senderUsername),
 					Email:         derefString(senderEmail),
-					EmailVerified: senderEmailVerified != nil && *senderEmailVerified,
 					Phone:     derefString(senderPhone),
 					Bio:       derefString(senderBio),
 					AvatarURL: derefString(senderAvatar),
@@ -976,7 +955,7 @@ func (s *Store) ListMessages(ctx context.Context, currentUserID, chatID int64, l
 		SELECT
 			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec, m.encrypted_payload, m.encryption_meta,
 			m.reply_to_message_id, m.pinned_at, m.edited_at, m.deleted_at, m.created_at,
-			u.id, u.name, u.username, u.email, u.phone, u.bio, u.avatar_url, u.public_key, u.email_verified, u.created_at
+			u.id, u.name, u.username, u.email, u.phone, u.bio, u.avatar_url, u.public_key, u.created_at
 		FROM messages m
 		JOIN users u ON u.id = m.sender_id
 		WHERE m.chat_id = $1
@@ -994,7 +973,7 @@ func (s *Store) ListMessages(ctx context.Context, currentUserID, chatID int64, l
 		if err := rows.Scan(
 			&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Kind, &msg.Text, &msg.FileURL, &msg.FileName, &msg.DurationSec, &msg.EncryptedPayload, &msg.EncryptionMeta,
 			&msg.ReplyToMessage, &msg.PinnedAt, &msg.EditedAt, &msg.DeletedAt, &msg.CreatedAt,
-			&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Phone, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.PublicKey, &msg.Sender.EmailVerified, &msg.Sender.CreatedAt,
+			&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Phone, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.PublicKey, &msg.Sender.CreatedAt,
 		); err != nil {
 			return ChatDetails{}, nil, err
 		}
@@ -1213,7 +1192,7 @@ func (s *Store) GetMessageByID(ctx context.Context, currentUserID, messageID int
 		SELECT
 			m.id, m.chat_id, m.sender_id, m.kind, m.text, m.file_url, m.file_name, m.duration_sec, m.encrypted_payload, m.encryption_meta,
 			m.reply_to_message_id, m.pinned_at, m.edited_at, m.deleted_at, m.created_at,
-			u.id, u.name, u.username, u.email, u.phone, u.bio, u.avatar_url, u.public_key, u.email_verified, u.created_at,
+			u.id, u.name, u.username, u.email, u.phone, u.bio, u.avatar_url, u.public_key, u.created_at,
 			COALESCE((
 				SELECT MIN(COALESCE(cp.last_read_message_id, 0))
 				FROM chat_participants cp
@@ -1226,7 +1205,7 @@ func (s *Store) GetMessageByID(ctx context.Context, currentUserID, messageID int
 	`, currentUserID, messageID).Scan(
 		&msg.ID, &msg.ChatID, &msg.SenderID, &msg.Kind, &msg.Text, &msg.FileURL, &msg.FileName, &msg.DurationSec, &msg.EncryptedPayload, &msg.EncryptionMeta,
 		&msg.ReplyToMessage, &msg.PinnedAt, &msg.EditedAt, &msg.DeletedAt, &msg.CreatedAt,
-		&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Phone, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.PublicKey, &msg.Sender.EmailVerified, &msg.Sender.CreatedAt,
+		&msg.Sender.ID, &msg.Sender.Name, &msg.Sender.Username, &msg.Sender.Email, &msg.Sender.Phone, &msg.Sender.Bio, &msg.Sender.AvatarURL, &msg.Sender.PublicKey, &msg.Sender.CreatedAt,
 		&peerLastRead,
 	)
 	if err != nil {

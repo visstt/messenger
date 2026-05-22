@@ -7,10 +7,12 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-FROM nginx:1.29-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# alpine:3.21 уже используется backend — не тянем отдельный образ library/nginx с Docker Hub
+FROM alpine:3.21
+RUN apk add --no-cache nginx
+
+COPY nginx.conf /etc/nginx/http.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
-

@@ -15,7 +15,6 @@ import (
 
 	"messenger/backend/internal/auth"
 	"messenger/backend/internal/config"
-	"messenger/backend/internal/mail"
 	"messenger/backend/internal/realtime"
 	"messenger/backend/internal/storage"
 	"messenger/backend/internal/store"
@@ -44,7 +43,6 @@ type liveKitTokenClaims struct {
 type Server struct {
 	cfg      config.Config
 	store    *store.Store
-	mailer   *mail.Client
 	hub      *realtime.Hub
 	uploader storage.Uploader
 	upgrader websocket.Upgrader
@@ -58,7 +56,6 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 	s := &Server{
 		cfg:      cfg,
 		store:    st,
-		mailer:   mail.NewClient(cfg.MailerSendAPIKey, cfg.MailerSendFrom, cfg.MailerSendName),
 		hub:      hub,
 		uploader: uploader,
 		upgrader: websocket.Upgrader{
@@ -87,10 +84,6 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 
 	r.Post("/api/auth/register", s.handleRegister)
 	r.Post("/api/auth/login", s.handleLogin)
-	r.Post("/api/auth/verify-email", s.handleVerifyEmail)
-	r.Post("/api/auth/resend-verification", s.handleResendVerification)
-	r.Post("/api/auth/forgot-password", s.handleForgotPassword)
-	r.Post("/api/auth/reset-password", s.handleResetPassword)
 	r.Post("/api/auth/logout", s.handleLogout)
 
 	r.Group(func(protected chi.Router) {
@@ -160,6 +153,9 @@ func (s *Server) handleUserSearch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to search users")
 		return
+	}
+	for i := range users {
+		users[i] = s.applyUserPresence(users[i])
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": users})
 }
@@ -285,6 +281,9 @@ func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load chats")
 		return
 	}
+	for i := range chats {
+		chats[i] = s.applyChatPreviewPresence(chats[i])
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": chats})
 }
 
@@ -301,6 +300,7 @@ func (s *Server) handleCreatePrivateChat(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "failed to create chat")
 		return
 	}
+	chat = s.applyChatDetailsPresence(chat)
 	s.pushChatCreatedEvent(chat, currentUserID(r.Context()))
 	writeJSON(w, http.StatusCreated, map[string]any{"chat": chat})
 }
@@ -478,6 +478,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "chat not found")
 		return
 	}
+	chat = s.applyChatDetailsPresence(chat)
 	writeJSON(w, http.StatusOK, map[string]any{"chat": chat, "items": messages})
 }
 
@@ -923,8 +924,16 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.hub.Register(userID, conn)
-	defer s.hub.Unregister(userID, conn)
+	if becameOnline := s.hub.Register(userID, conn); becameOnline {
+		go s.broadcastPresence(context.Background(), userID, true)
+	}
+	defer func() {
+		if wentOffline := s.hub.Unregister(userID, conn); wentOffline {
+			bg := context.Background()
+			_, _ = s.store.TouchLastSeen(bg, userID)
+			go s.broadcastPresence(bg, userID, false)
+		}
+	}()
 
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {
@@ -987,6 +996,7 @@ func (s *Server) pushMessageEvents(msg store.Message, recipientIDs []int64, send
 }
 
 func (s *Server) pushChatCreatedEvent(chat store.ChatDetails, creatorID int64) {
+	chat = s.applyChatDetailsPresence(chat)
 	event := realtime.Event{
 		Type: "chat:created",
 		Data: map[string]any{

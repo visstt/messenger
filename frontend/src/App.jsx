@@ -27,6 +27,7 @@ import {
   showMessageNotification,
 } from "./utils/browserNotifications";
 import { getChatTitle } from "./utils/chats";
+import { mergeUserPresence } from "./utils/presence";
 import { parseAttachmentItems, parseImageItems, renderPreview } from "./utils/messages";
 import { normalizeMediaUrl } from "./utils/mediaUrls";
 import { useSwipeBack } from "./hooks/useSwipeBack";
@@ -41,14 +42,13 @@ import { formatRuPhoneInput } from "./utils/phoneMask";
 
 const emptyProfile = { name: "", username: "", phone: "", bio: "", avatarUrl: "" };
 
-function readResetTokenFromUrl() {
-  if (typeof window === "undefined") return "";
-  const token = new URLSearchParams(window.location.search).get("reset");
-  if (!token) return "";
-  const url = new URL(window.location.href);
-  url.searchParams.delete("reset");
-  window.history.replaceState({}, "", url.pathname + url.search + url.hash);
-  return token;
+function patchUserPresenceInChats(chats, userId, patch) {
+  return chats.map((chat) => {
+    if (chat.kind !== "private" || Number(chat.peer?.id) !== Number(userId)) {
+      return chat;
+    }
+    return { ...chat, peer: mergeUserPresence(chat.peer, patch) };
+  });
 }
 
 export default function App() {
@@ -62,9 +62,6 @@ export default function App() {
   });
   const [booting, setBooting] = useState(true);
   const [authMode, setAuthMode] = useState("login");
-  const [authStep, setAuthStep] = useState("form");
-  const [pendingEmail, setPendingEmail] = useState("");
-  const [resetToken, setResetToken] = useState(() => readResetTokenFromUrl());
   const [error, setError] = useState("");
   const [authInfo, setAuthInfo] = useState("");
   const [currentUser, setCurrentUser] = useState(null);
@@ -302,6 +299,26 @@ export default function App() {
             ...prev,
             [payload.data.chatId]: payload.data.isTyping,
           }));
+        }
+
+        if (payload.type === "user:presence") {
+          const userId = Number(payload.data.userId);
+          if (!userId) return;
+          const patch = {
+            online: Boolean(payload.data.online),
+            lastSeenAt: payload.data.lastSeenAt ?? null,
+          };
+          setChats((prev) => patchUserPresenceInChats(prev, userId, patch));
+          setActiveChat((prev) => {
+            if (!prev || prev.kind !== "private" || Number(prev.peer?.id) !== userId) {
+              return prev;
+            }
+            return { ...prev, peer: mergeUserPresence(prev.peer, patch) };
+          });
+          setPeerProfileUser((prev) => {
+            if (!prev || Number(prev.id) !== userId) return prev;
+            return mergeUserPresence(prev, patch);
+          });
         }
 
         if (payload.type === "chat:read") {
@@ -658,89 +675,7 @@ export default function App() {
         email: formData.get("email"),
         password: formData.get("password"),
       });
-
-      if (result.needsVerification) {
-        setPendingEmail(result.email || formData.get("email") || "");
-        setAuthStep("verify");
-        setAuthInfo("Код подтверждения отправлен на вашу почту.");
-        return;
-      }
-
-      if (result.user) {
-        await completeAuthSession(result.user);
-      }
-    } catch (err) {
-      if (err.needsVerification) {
-        setPendingEmail(err.email || "");
-        setAuthStep("verify");
-        setError("Подтвердите почту, чтобы войти.");
-        return;
-      }
-      setError(err.message);
-    }
-  }
-
-  async function handleVerifyEmail({ email, code }) {
-    setError("");
-    setAuthInfo("");
-    try {
-      const payload = await api.verifyEmail({ email, code: String(code || "").trim() });
-      setAuthStep("form");
-      setPendingEmail("");
-      await completeAuthSession(payload.user);
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleResendVerification(email) {
-    setError("");
-    setAuthInfo("");
-    try {
-      await api.resendVerification({ email });
-      setAuthInfo("Новый код отправлен на почту.");
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleForgotPassword({ email }) {
-    setError("");
-    setAuthInfo("");
-    try {
-      await api.forgotPassword({ email });
-      setAuthInfo("Если аккаунт с такой почтой существует, мы отправили ссылку для сброса пароля.");
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleResetPassword({ token, password, passwordConfirm }) {
-    setError("");
-    setAuthInfo("");
-    if (password !== passwordConfirm) {
-      setError("Пароли не совпадают");
-      return;
-    }
-    try {
-      await api.resetPassword({ token, password });
-      setResetToken("");
-      setAuthStep("form");
-      setAuthMode("login");
-      setAuthInfo("Пароль обновлён. Войдите с новым паролем.");
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleSettingsPasswordReset() {
-    if (!currentUser?.email) return;
-    setSettingsOpen(false);
-    setError("");
-    setAuthInfo("");
-    try {
-      await api.forgotPassword({ email: currentUser.email });
-      pushToast("Ссылка для сброса пароля отправлена на вашу почту");
+      await completeAuthSession(result.user);
     } catch (err) {
       setError(err.message);
     }
@@ -1239,28 +1174,14 @@ export default function App() {
     return (
       <AuthScreen
         authMode={authMode}
-        authStep={resetToken ? "reset" : authStep}
-        pendingEmail={pendingEmail}
-        resetToken={resetToken}
         error={error}
         info={authInfo}
         onModeChange={(mode) => {
           setAuthMode(mode);
-          setAuthStep("form");
-          setError("");
-          setAuthInfo("");
-        }}
-        onStepChange={(step) => {
-          setAuthStep(step);
-          if (step === "form") setResetToken("");
           setError("");
           setAuthInfo("");
         }}
         onSubmit={handleAuthSubmit}
-        onVerify={handleVerifyEmail}
-        onResendCode={handleResendVerification}
-        onForgotPassword={handleForgotPassword}
-        onResetPassword={handleResetPassword}
       />
     );
   }
@@ -1405,10 +1326,8 @@ export default function App() {
       <SettingsModal
         open={settingsOpen}
         theme={theme}
-        userEmail={currentUser?.email}
         onClose={() => setSettingsOpen(false)}
         onToggleTheme={() => setTheme((prev) => (prev === "light" ? "dark" : "light"))}
-        onRequestPasswordReset={handleSettingsPasswordReset}
       />
 
       <ProfileEditorModal

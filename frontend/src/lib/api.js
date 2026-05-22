@@ -17,12 +17,7 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     const message = payload?.error || "Request failed";
-    const err = new Error(message);
-    if (payload?.needsVerification) {
-      err.needsVerification = true;
-      err.email = payload.email || "";
-    }
-    throw err;
+    throw new Error(message);
   }
   return payload;
 }
@@ -31,14 +26,6 @@ export const api = {
   me: () => request("/api/auth/me"),
   register: (body) =>
     request("/api/auth/register", { method: "POST", body: JSON.stringify(body) }),
-  verifyEmail: (body) =>
-    request("/api/auth/verify-email", { method: "POST", body: JSON.stringify(body) }),
-  resendVerification: (body) =>
-    request("/api/auth/resend-verification", { method: "POST", body: JSON.stringify(body) }),
-  forgotPassword: (body) =>
-    request("/api/auth/forgot-password", { method: "POST", body: JSON.stringify(body) }),
-  resetPassword: (body) =>
-    request("/api/auth/reset-password", { method: "POST", body: JSON.stringify(body) }),
   login: (body) =>
     request("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request("/api/auth/logout", { method: "POST" }),

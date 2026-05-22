@@ -4,15 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
-	"unicode"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
-
-var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]{3,32}$`)
 
 // NormalizeRegistration trims and lowercases email for consistent checks.
 func NormalizeRegistration(input Credentials) Credentials {
@@ -30,15 +26,7 @@ func ValidateRegistration(input Credentials) error {
 		return fmt.Errorf("name is required")
 	}
 	if input.Username == "" {
-		return fmt.Errorf("username is required")
-	}
-	if strings.ContainsFunc(input.Username, func(r rune) bool {
-		return unicode.IsSpace(r)
-	}) {
-		return fmt.Errorf("в имени пользователя нельзя использовать пробелы; только латиница, цифры и _ (например sergey_pakhomov)")
-	}
-	if !usernamePattern.MatchString(input.Username) {
-		return fmt.Errorf("имя пользователя: 3–32 символа, только латинские буквы, цифры и _")
+		return fmt.Errorf("укажите имя пользователя")
 	}
 	if input.Email == "" {
 		return fmt.Errorf("email is required")
@@ -47,13 +35,6 @@ func ValidateRegistration(input Credentials) error {
 		return fmt.Errorf("некорректный email")
 	}
 	if len(input.Password) < 8 {
-		return fmt.Errorf("пароль должен быть не короче 8 символов")
-	}
-	return nil
-}
-
-func ValidatePassword(password string) error {
-	if len(strings.TrimSpace(password)) < 8 {
 		return fmt.Errorf("пароль должен быть не короче 8 символов")
 	}
 	return nil

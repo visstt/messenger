@@ -17,6 +17,7 @@ import Avatar from "../Avatar";
 import VideoCircle from "../VideoCircle";
 import { formatClock, parseAttachmentItems, parseImageItems } from "../../utils/messages";
 import { getChatAvatar, getChatSubtitle, getChatTitle } from "../../utils/chats";
+import { formatPresenceLabel } from "../../utils/presence";
 import { formatRuPhoneInput } from "../../utils/phoneMask";
 import { Button, Modal } from "../../ui";
 
@@ -132,7 +133,7 @@ export default function PeerProfileModal({
           ) : (
             <div className="tg-peer-media__subtitle">
               {isStandaloneUser
-                ? `@${displayUser?.username || ""}`
+                ? formatPresenceLabel(displayUser) || `@${displayUser?.username || ""}`
                 : getChatSubtitle(chat)}
             </div>
           )}

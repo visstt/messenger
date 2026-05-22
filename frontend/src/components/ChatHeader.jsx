@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { FiChevronLeft, FiPhone, FiVideo } from "react-icons/fi";
 import Avatar from "./Avatar";
 import { getChatAvatar, getChatSubtitle, getChatTitle } from "../utils/chats";
@@ -10,6 +11,18 @@ export default function ChatHeader({
   onStartCall,
   onBack,
 }) {
+  const showPresenceTick = chat?.kind === "private" && chat?.peer?.id && !activeTyping;
+  const [, setPresenceTick] = useState(0);
+
+  useEffect(() => {
+    if (!showPresenceTick) return undefined;
+    const timer = window.setInterval(() => setPresenceTick((value) => value + 1), 30000);
+    return () => window.clearInterval(timer);
+  }, [showPresenceTick, chat?.peer?.online, chat?.peer?.lastSeenAt]);
+
+  const subtitle = activeTyping ? "печатает..." : getChatSubtitle(chat);
+  const peerOnline = chat?.kind === "private" && Boolean(chat?.peer?.online);
+
   return (
     <header className="chat-header">
       <div className="chat-header-shell">
@@ -26,10 +39,12 @@ export default function ChatHeader({
           )}
 
           <button type="button" className="chat-header-trigger" onClick={onOpenProfile}>
-            <Avatar user={getChatAvatar(chat)} />
+            <Avatar user={getChatAvatar(chat)} showOnline={peerOnline} />
             <div className="chat-title-block">
               <h3>{getChatTitle(chat)}</h3>
-              <p>{activeTyping ? "печатает..." : getChatSubtitle(chat)}</p>
+              <p className={peerOnline ? "chat-presence chat-presence--online" : "chat-presence"}>
+                {subtitle}
+              </p>
             </div>
           </button>
         </div>
