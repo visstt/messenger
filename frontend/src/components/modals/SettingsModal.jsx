@@ -7,7 +7,14 @@ function isDesktopApp() {
   return typeof window !== "undefined" && Boolean(window.messengerDesktop?.isDesktop);
 }
 
-export default function SettingsModal({ open, theme, onClose, onToggleTheme }) {
+export default function SettingsModal({
+  open,
+  theme,
+  userEmail,
+  onClose,
+  onToggleTheme,
+  onRequestPasswordReset,
+}) {
   if (!open) return null;
 
   const isDark = theme === "dark";
@@ -37,6 +44,23 @@ export default function SettingsModal({ open, theme, onClose, onToggleTheme }) {
             <FiMoon />
             <span>Тёмная</span>
           </button>
+        </div>
+      </div>
+
+      <div className="tg-settings__section">
+        <div className="tg-settings__section-title">Безопасность</div>
+        <div className="tg-settings__security-card">
+          <div className="tg-settings__security-copy">
+            <strong>Восстановление пароля</strong>
+            <p>
+              {userEmail
+                ? `Отправим ссылку для сброса пароля на ${userEmail}`
+                : "Отправим ссылку для сброса пароля на почту аккаунта"}
+            </p>
+          </div>
+          <Button type="button" variant="primary" onClick={onRequestPasswordReset}>
+            Сбросить пароль
+          </Button>
         </div>
       </div>
 
