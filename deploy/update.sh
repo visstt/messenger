@@ -34,7 +34,7 @@ git_pull() {
     return 0
   fi
 
-  log "git pull"
+  log "git fetch origin"
   cd "$ROOT"
 
   if [[ -n "$(git status --porcelain deploy/ 2>/dev/null)" ]]; then
@@ -42,9 +42,33 @@ git_pull() {
     git checkout -- deploy/ 2>/dev/null || true
   fi
 
-  if ! git pull --ff-only; then
-    warn "git pull не удался — продолжаем с текущими файлами"
+  if ! git fetch origin; then
+    warn "git fetch не удался — продолжаем с текущими файлами"
+    return 0
   fi
+
+  local local_head remote_head
+  local_head="$(git rev-parse HEAD 2>/dev/null || true)"
+  remote_head="$(git rev-parse origin/main 2>/dev/null || true)"
+
+  if [[ -z "$local_head" || -z "$remote_head" ]]; then
+    warn "не удалось сравнить HEAD с origin/main — продолжаем с текущими файлами"
+    return 0
+  fi
+
+  if [[ "$local_head" == "$remote_head" ]]; then
+    log "репозиторий уже на актуальном коммите origin/main"
+    return 0
+  fi
+
+  if git merge-base --is-ancestor "$local_head" "$remote_head"; then
+    log "fast-forward до origin/main"
+    git merge --ff-only origin/main
+    return 0
+  fi
+
+  warn "ветка на VPS разошлась с origin/main — сброс на origin/main (локальные коммиты на сервере будут потеряны)"
+  git reset --hard origin/main
 }
 
 DESKTOP_INSTALLER="$ROOT/frontend/public/downloads/Signal-Desktop-Setup.exe"
