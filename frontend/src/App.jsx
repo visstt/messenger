@@ -41,6 +41,16 @@ import { formatRuPhoneInput } from "./utils/phoneMask";
 
 const emptyProfile = { name: "", username: "", phone: "", bio: "", avatarUrl: "" };
 
+function readResetTokenFromUrl() {
+  if (typeof window === "undefined") return "";
+  const token = new URLSearchParams(window.location.search).get("reset");
+  if (!token) return "";
+  const url = new URL(window.location.href);
+  url.searchParams.delete("reset");
+  window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+  return token;
+}
+
 export default function App() {
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -52,7 +62,11 @@ export default function App() {
   });
   const [booting, setBooting] = useState(true);
   const [authMode, setAuthMode] = useState("login");
+  const [authStep, setAuthStep] = useState("form");
+  const [pendingEmail, setPendingEmail] = useState("");
+  const [resetToken, setResetToken] = useState(() => readResetTokenFromUrl());
   const [error, setError] = useState("");
+  const [authInfo, setAuthInfo] = useState("");
   const [currentUser, setCurrentUser] = useState(null);
   const [chats, setChats] = useState([]);
   const [activeChat, setActiveChat] = useState(null);
@@ -606,38 +620,127 @@ export default function App() {
     }
   }
 
+  async function completeAuthSession(user) {
+    await establishSecureSession(user);
+
+    const joinToken = getJoinTokenFromUrl() || readPendingJoinToken();
+    if (joinToken) {
+      await processGroupInviteJoin(joinToken);
+      return;
+    }
+
+    const nextChats = await fetchChats();
+    if (!isMobile && nextChats[0]) {
+      await openChat(nextChats[0].id, { markRead: true, forceScroll: true });
+    }
+  }
+
   async function handleAuthSubmit(event) {
     event.preventDefault();
     setError("");
+    setAuthInfo("");
 
     const formData = new FormData(event.currentTarget);
 
     try {
-      const payload =
-        authMode === "login"
-          ? await api.login({
-              identifier: formData.get("identifier"),
-              password: formData.get("password"),
-            })
-          : await api.register({
-              name: formData.get("name"),
-              username: formData.get("username"),
-              email: formData.get("email"),
-              password: formData.get("password"),
-            });
-
-      await establishSecureSession(payload.user);
-
-      const joinToken = getJoinTokenFromUrl() || readPendingJoinToken();
-      if (joinToken) {
-        await processGroupInviteJoin(joinToken);
+      if (authMode === "login") {
+        const payload = await api.login({
+          identifier: formData.get("identifier"),
+          password: formData.get("password"),
+        });
+        await completeAuthSession(payload.user);
         return;
       }
 
-      const nextChats = await fetchChats();
-      if (!isMobile && nextChats[0]) {
-        await openChat(nextChats[0].id, { markRead: true, forceScroll: true });
+      const result = await api.register({
+        name: formData.get("name"),
+        username: formData.get("username"),
+        email: formData.get("email"),
+        password: formData.get("password"),
+      });
+
+      if (result.needsVerification) {
+        setPendingEmail(result.email || formData.get("email") || "");
+        setAuthStep("verify");
+        setAuthInfo("Код подтверждения отправлен на вашу почту.");
+        return;
       }
+
+      if (result.user) {
+        await completeAuthSession(result.user);
+      }
+    } catch (err) {
+      if (err.needsVerification) {
+        setPendingEmail(err.email || "");
+        setAuthStep("verify");
+        setError("Подтвердите почту, чтобы войти.");
+        return;
+      }
+      setError(err.message);
+    }
+  }
+
+  async function handleVerifyEmail({ email, code }) {
+    setError("");
+    setAuthInfo("");
+    try {
+      const payload = await api.verifyEmail({ email, code: String(code || "").trim() });
+      setAuthStep("form");
+      setPendingEmail("");
+      await completeAuthSession(payload.user);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleResendVerification(email) {
+    setError("");
+    setAuthInfo("");
+    try {
+      await api.resendVerification({ email });
+      setAuthInfo("Новый код отправлен на почту.");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleForgotPassword({ email }) {
+    setError("");
+    setAuthInfo("");
+    try {
+      await api.forgotPassword({ email });
+      setAuthInfo("Если аккаунт с такой почтой существует, мы отправили ссылку для сброса пароля.");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleResetPassword({ token, password, passwordConfirm }) {
+    setError("");
+    setAuthInfo("");
+    if (password !== passwordConfirm) {
+      setError("Пароли не совпадают");
+      return;
+    }
+    try {
+      await api.resetPassword({ token, password });
+      setResetToken("");
+      setAuthStep("form");
+      setAuthMode("login");
+      setAuthInfo("Пароль обновлён. Войдите с новым паролем.");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleSettingsPasswordReset() {
+    if (!currentUser?.email) return;
+    setSettingsOpen(false);
+    setError("");
+    setAuthInfo("");
+    try {
+      await api.forgotPassword({ email: currentUser.email });
+      pushToast("Ссылка для сброса пароля отправлена на вашу почту");
     } catch (err) {
       setError(err.message);
     }
@@ -1136,9 +1239,28 @@ export default function App() {
     return (
       <AuthScreen
         authMode={authMode}
+        authStep={resetToken ? "reset" : authStep}
+        pendingEmail={pendingEmail}
+        resetToken={resetToken}
         error={error}
-        onModeChange={setAuthMode}
+        info={authInfo}
+        onModeChange={(mode) => {
+          setAuthMode(mode);
+          setAuthStep("form");
+          setError("");
+          setAuthInfo("");
+        }}
+        onStepChange={(step) => {
+          setAuthStep(step);
+          if (step === "form") setResetToken("");
+          setError("");
+          setAuthInfo("");
+        }}
         onSubmit={handleAuthSubmit}
+        onVerify={handleVerifyEmail}
+        onResendCode={handleResendVerification}
+        onForgotPassword={handleForgotPassword}
+        onResetPassword={handleResetPassword}
       />
     );
   }
@@ -1283,8 +1405,10 @@ export default function App() {
       <SettingsModal
         open={settingsOpen}
         theme={theme}
+        userEmail={currentUser?.email}
         onClose={() => setSettingsOpen(false)}
         onToggleTheme={() => setTheme((prev) => (prev === "light" ? "dark" : "light"))}
+        onRequestPasswordReset={handleSettingsPasswordReset}
       />
 
       <ProfileEditorModal

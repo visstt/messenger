@@ -52,6 +52,13 @@ func ValidateRegistration(input Credentials) error {
 	return nil
 }
 
+func ValidatePassword(password string) error {
+	if len(strings.TrimSpace(password)) < 8 {
+		return fmt.Errorf("пароль должен быть не короче 8 символов")
+	}
+	return nil
+}
+
 // RegistrationConflict reports which unique field is already taken.
 func (s *Store) RegistrationConflict(ctx context.Context, username, email string) (string, error) {
 	username = strings.TrimSpace(username)

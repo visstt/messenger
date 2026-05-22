@@ -42,6 +42,9 @@ services:
       LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}"
       LIVEKIT_API_KEY: devkey
       LIVEKIT_API_SECRET: secret
+      MAILERSEND_API_KEY: "${MAILERSEND_API_KEY:-}"
+      MAILERSEND_FROM_EMAIL: "${MAILERSEND_FROM_EMAIL:-}"
+      MAILERSEND_FROM_NAME: "${MAILERSEND_FROM_NAME:-Signal}"
     depends_on:
       postgres:
         condition: service_healthy
