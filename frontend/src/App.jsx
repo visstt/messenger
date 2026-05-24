@@ -1328,6 +1328,9 @@ export default function App() {
         theme={theme}
         onClose={() => setSettingsOpen(false)}
         onToggleTheme={() => setTheme((prev) => (prev === "light" ? "dark" : "light"))}
+        onInviteCopied={(message) =>
+          pushToast(message || "Приглашение скопировано — отправьте его друзьям")
+        }
       />
 
       <ProfileEditorModal

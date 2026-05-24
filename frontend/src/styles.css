@@ -4066,30 +4066,16 @@ button {
   filter: brightness(1.05);
 }
 
-.tg-settings__security-card {
-  align-items: center;
-  background: var(--tg-surface-2);
-  border-radius: 14px;
-  display: flex;
-  gap: 16px;
-  justify-content: space-between;
-  padding: 16px;
+button.tg-settings__download-btn {
+  border: 0;
+  width: 100%;
+  cursor: pointer;
+  font: inherit;
 }
 
-.tg-settings__security-copy {
-  display: grid;
-  gap: 6px;
-}
-
-.tg-settings__security-copy strong {
-  font-size: 15px;
-}
-
-.tg-settings__security-copy p {
-  color: var(--tg-muted);
-  font-size: 13px;
-  line-height: 1.45;
-  margin: 0;
+button.tg-settings__download-btn:disabled {
+  cursor: wait;
+  opacity: 0.75;
 }
 
 .tg-settings__footer {
