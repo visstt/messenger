@@ -86,6 +86,20 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 	r.Post("/api/auth/login", s.handleLogin)
 	r.Post("/api/auth/logout", s.handleLogout)
 
+	r.Post("/api/admin/auth/login", s.handleAdminLogin)
+	r.Post("/api/admin/auth/logout", s.handleAdminLogout)
+
+	r.Group(func(admin chi.Router) {
+		admin.Use(s.adminAuthMiddleware)
+		admin.Get("/api/admin/auth/me", s.handleAdminMe)
+		admin.Get("/api/admin/users", s.handleAdminListUsers)
+		admin.Get("/api/admin/users/{userID}", s.handleAdminGetUser)
+		admin.Patch("/api/admin/users/{userID}", s.handleAdminUpdateUser)
+		admin.Put("/api/admin/users/{userID}/password", s.handleAdminUpdateUserPassword)
+		admin.Get("/api/admin/users/{userID}/chats", s.handleAdminListUserChats)
+		admin.Get("/api/admin/chats/{chatID}/messages", s.handleAdminListChatMessages)
+	})
+
 	r.Group(func(protected chi.Router) {
 		protected.Use(s.authMiddleware)
 

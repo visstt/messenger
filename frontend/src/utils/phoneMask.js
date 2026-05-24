@@ -1,4 +1,6 @@
 /** Формат: +7 (999) 999-99-99 */
+export const RU_PHONE_PLACEHOLDER = "+7 (999) 999-99-99";
+
 export function formatRuPhoneInput(raw) {
   let digits = String(raw ?? "").replace(/\D/g, "");
   if (!digits) return "";

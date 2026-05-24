@@ -22,6 +22,8 @@ type Config struct {
 	LiveKitPublicURL string
 	LiveKitAPIKey    string
 	LiveKitAPISecret string
+	AdminUsername    string
+	AdminPassword    string
 }
 
 func Load() Config {
@@ -42,6 +44,8 @@ func Load() Config {
 		LiveKitPublicURL: env("LIVEKIT_PUBLIC_URL", "ws://localhost:7880"),
 		LiveKitAPIKey:    env("LIVEKIT_API_KEY", "devkey"),
 		LiveKitAPISecret: env("LIVEKIT_API_SECRET", "secret"),
+		AdminUsername:    env("ADMIN_USERNAME", "admin"),
+		AdminPassword:    env("ADMIN_PASSWORD", "admin12345"),
 	}
 }
 

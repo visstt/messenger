@@ -50,7 +50,24 @@ export default function PeerProfileModal({
   const media = useMemo(() => buildMediaCollections(messages), [messages]);
   const isStandaloneUser = Boolean(user);
   const isGroup = chat?.kind === "group";
-  const displayUser = user || (!isGroup ? chat?.peer : null);
+  const displayUser = useMemo(() => {
+    if (user) return user;
+    if (!chat || isGroup) return null;
+    const peer = chat.peer;
+    const participant = (chat.participants || []).find(
+      (member) => Number(member.id) !== Number(currentUserId)
+    );
+    if (!participant) return peer || null;
+    if (!peer?.id) return participant;
+    return {
+      ...peer,
+      ...participant,
+      phone: participant.phone || peer.phone || "",
+      bio: participant.bio || peer.bio || "",
+      email: participant.email || peer.email || "",
+    };
+  }, [user, chat, isGroup, currentUserId]);
+  const isPrivatePeer = Boolean(displayUser) && !isGroup;
   const isSelfProfile =
     displayUser && currentUserId ? Number(displayUser.id) === Number(currentUserId) : false;
   const canContact = Boolean(displayUser?.id) && !isSelfProfile;
@@ -138,11 +155,9 @@ export default function PeerProfileModal({
             </div>
           )}
           <div className="tg-peer-media__description">
-            {isStandaloneUser
-              ? displayUser?.bio || "Пользователь пока не добавил описание."
-              : isGroup
+            {isGroup
               ? "Общий чат и вся история вложений."
-              : "Диалог, профиль и общие медиафайлы."}
+              : displayUser?.bio?.trim() || "Пользователь пока не добавил описание."}
           </div>
         </div>
         {isGroup && (
@@ -187,16 +202,18 @@ export default function PeerProfileModal({
         </div>
       )}
 
-      {isStandaloneUser && (
+      {isPrivatePeer && (
         <div className="tg-peer-user-fields" role="list" aria-label="Информация пользователя">
           <div className="tg-peer-user-fields__row" role="listitem">
             <span className="tg-peer-user-fields__label">Username</span>
-            <strong className="tg-peer-user-fields__value">@{displayUser?.username || "-"}</strong>
+            <strong className="tg-peer-user-fields__value">@{displayUser?.username || "—"}</strong>
           </div>
           <div className="tg-peer-user-fields__row" role="listitem">
             <span className="tg-peer-user-fields__label">Телефон</span>
             <strong className="tg-peer-user-fields__value">
-              {displayUser?.phone ? formatRuPhoneInput(displayUser.phone) : "Не указан"}
+              {displayUser?.phone?.trim()
+                ? formatRuPhoneInput(displayUser.phone)
+                : "Не указан"}
             </strong>
           </div>
         </div>

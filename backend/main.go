@@ -40,6 +40,9 @@ func main() {
 	if err := st.SeedDemoData(ctx); err != nil {
 		log.Fatalf("seed demo data: %v", err)
 	}
+	if err := st.SeedAdminUser(ctx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
+		log.Fatalf("seed admin user: %v", err)
+	}
 
 	uploader, err := storage.NewUploader(ctx, cfg)
 	if err != nil {

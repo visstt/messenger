@@ -1,0 +1,44 @@
+.list {
+  display: grid;
+  gap: 10px;
+}
+
+.item {
+  display: block;
+  padding: 16px 18px;
+  background: #fff;
+  border: 1px solid #e8eaed;
+  border-radius: 14px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+}
+
+.item:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 10px 28px rgba(59, 130, 246, 0.1);
+  transform: translateY(-1px);
+}
+
+.itemTitle {
+  font-weight: 650;
+  font-size: 1rem;
+  margin-bottom: 6px;
+  letter-spacing: -0.01em;
+}
+
+.itemMeta {
+  color: #6b7280;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.itemPreview {
+  margin-top: 6px;
+  color: #4b5563;
+  font-size: 0.88rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

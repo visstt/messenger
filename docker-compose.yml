@@ -42,6 +42,8 @@ services:
       LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}"
       LIVEKIT_API_KEY: devkey
       LIVEKIT_API_SECRET: secret
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin12345}"
     depends_on:
       postgres:
         condition: service_healthy

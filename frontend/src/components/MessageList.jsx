@@ -38,6 +38,8 @@ export default function MessageList({
   onOpenImage,
   onJoinGroupInvite,
   forceScroll,
+  readOnly = false,
+  adminView = false,
 }) {
   const listRef = useRef(null);
   const bottomRef = useRef(null);
@@ -111,7 +113,7 @@ export default function MessageList({
   }, [chatId]);
 
   useEffect(() => {
-    if (!contextMenu) return undefined;
+    if (readOnly || !contextMenu) return undefined;
 
     function blockNativeContextMenu(event) {
       event.preventDefault();
@@ -119,9 +121,11 @@ export default function MessageList({
 
     window.addEventListener("contextmenu", blockNativeContextMenu, true);
     return () => window.removeEventListener("contextmenu", blockNativeContextMenu, true);
-  }, [contextMenu]);
+  }, [contextMenu, readOnly]);
 
   useEffect(() => {
+    if (readOnly) return undefined;
+
     function closeMenu(event) {
       if (event.button === 2) return;
       setContextMenu(null);
@@ -134,7 +138,7 @@ export default function MessageList({
       window.removeEventListener("resize", closeMenu);
       clearLongPressTimer();
     };
-  }, []);
+  }, [readOnly]);
 
   function clearLongPressTimer() {
     if (longPressTimerRef.current) {
@@ -196,29 +200,28 @@ export default function MessageList({
           );
         }
 
-        const own = message.senderId === currentUser.id;
+        const own = message.senderId === currentUser?.id;
         const replyTargetId = message.replyToMessageId ?? message.replyToMessage;
         const replyMessage = replyTargetId
           ? replyIndex.get(Number(replyTargetId))
           : null;
-
-        return (
-          <article key={message.key} className={`bubble-row ${own ? "own" : ""}`}>
-            <div
-              className={`bubble ${own ? "own" : ""} ${message.pinnedAt ? "is-pinned" : ""}`}
-              data-message-id={message.id}
-              onContextMenu={(event) => {
+        const adminDeletedSnapshot = adminView && message.adminDeletedSnapshot;
+        const showDeletedPlaceholder = message.deletedAt && !adminDeletedSnapshot;
+        const bubbleInteractionProps = readOnly
+          ? {}
+          : {
+              onContextMenu: (event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 openMessageMenu(message, event);
-              }}
-              onMouseDown={(event) => {
+              },
+              onMouseDown: (event) => {
                 if (event.button !== 2) return;
                 event.preventDefault();
                 event.stopPropagation();
                 openMessageMenu(message, event);
-              }}
-              onPointerDown={(event) => {
+              },
+              onPointerDown: (event) => {
                 if (event.pointerType === "mouse") {
                   if (event.button !== 2) return;
                   event.preventDefault();
@@ -230,10 +233,20 @@ export default function MessageList({
                 longPressTimerRef.current = window.setTimeout(() => {
                   openMessageMenu(message, event);
                 }, 520);
-              }}
-              onPointerMove={clearLongPressTimer}
-              onPointerUp={clearLongPressTimer}
-              onPointerCancel={clearLongPressTimer}
+              },
+              onPointerMove: clearLongPressTimer,
+              onPointerUp: clearLongPressTimer,
+              onPointerCancel: clearLongPressTimer,
+            };
+
+        return (
+          <article key={message.key} className={`bubble-row ${own ? "own" : ""}`}>
+            <div
+              className={`bubble ${own ? "own" : ""} ${message.pinnedAt ? "is-pinned" : ""} ${
+                adminDeletedSnapshot ? "admin-bubble--deleted" : ""
+              }`}
+              data-message-id={message.id}
+              {...bubbleInteractionProps}
             >
               {!own && <span className="bubble-author">{message.sender.name}</span>}
               {message.forwardedFromName && !message.deletedAt && (
@@ -248,7 +261,7 @@ export default function MessageList({
                   <span>{renderPreview(replyMessage)}</span>
                 </div>
               )}
-              {message.deletedAt ? (
+              {showDeletedPlaceholder ? (
                 <p className="deleted-text">
                   {message.deletedGroup ? "Группа фото удалена" : "Сообщение удалено"}
                 </p>
@@ -300,17 +313,21 @@ export default function MessageList({
               )}
               <footer className="bubble-meta">
                 <span>{formatClock(message.createdAt)}</span>
+                {adminDeletedSnapshot && <span className="admin-bubble-tag">удалено</span>}
+                {adminView && message.encryptedPayload && !adminDeletedSnapshot && (
+                  <span className="admin-bubble-tag">зашифровано</span>
+                )}
                 {message.pinnedAt && <span>закреплено</span>}
                 {message.editedAt && <span>изменено</span>}
                 {message.grouped && <span>{`фото: ${message.items.length}`}</span>}
-                {own && <span>{translateStatus(message.status)}</span>}
+                {own && !readOnly && <span>{translateStatus(message.status)}</span>}
               </footer>
             </div>
           </article>
         );
       })}
       <div ref={bottomRef} className="message-list-anchor" aria-hidden="true" />
-      {contextMenu &&
+      {!readOnly && contextMenu &&
         createPortal(
           <div
             className="message-context-menu"

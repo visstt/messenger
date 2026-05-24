@@ -193,6 +193,32 @@ ALTER TABLE chats ADD COLUMN IF NOT EXISTS invite_token TEXT NOT NULL DEFAULT ''
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_invite_token ON chats(invite_token) WHERE invite_token <> '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 DROP TABLE IF EXISTS email_tokens;
+
+CREATE TABLE IF NOT EXISTS admin_users (
+	id BIGSERIAL PRIMARY KEY,
+	username TEXT NOT NULL UNIQUE,
+	password_hash TEXT NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS message_audit (
+	id BIGSERIAL PRIMARY KEY,
+	message_id BIGINT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+	chat_id BIGINT NOT NULL,
+	sender_id BIGINT NOT NULL,
+	kind TEXT NOT NULL,
+	text TEXT NOT NULL DEFAULT '',
+	file_url TEXT NOT NULL DEFAULT '',
+	file_name TEXT NOT NULL DEFAULT '',
+	duration_sec INTEGER NOT NULL DEFAULT 0,
+	encrypted_payload TEXT NOT NULL DEFAULT '',
+	encryption_meta TEXT NOT NULL DEFAULT '',
+	reply_to_message_id BIGINT,
+	created_at TIMESTAMPTZ NOT NULL,
+	deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_audit_chat ON message_audit(chat_id, deleted_at DESC);
 `
 	_, err := s.db.Exec(ctx, schema)
 	return err
@@ -1111,6 +1137,10 @@ func (s *Store) DeleteMessage(ctx context.Context, currentUserID, messageID int6
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Message{}, nil, ErrNotFound
 		}
+		return Message{}, nil, err
+	}
+
+	if err := s.archiveMessageBeforeDelete(ctx, messageID); err != nil {
 		return Message{}, nil, err
 	}
 

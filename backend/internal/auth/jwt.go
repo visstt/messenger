@@ -38,3 +38,37 @@ func ParseToken(secret, tokenString string) (int64, error) {
 	}
 	return claims.UserID, nil
 }
+
+type AdminClaims struct {
+	AdminID int64  `json:"adminId"`
+	Role    string `json:"role"`
+	jwt.RegisteredClaims
+}
+
+func CreateAdminToken(secret string, adminID int64) (string, error) {
+	claims := AdminClaims{
+		AdminID: adminID,
+		Role:    "admin",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(secret))
+}
+
+func ParseAdminToken(secret, tokenString string) (int64, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &AdminClaims{}, func(token *jwt.Token) (any, error) {
+		return []byte(secret), nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	claims, ok := token.Claims.(*AdminClaims)
+	if !ok || !token.Valid || claims.Role != "admin" || claims.AdminID == 0 {
+		return 0, errors.New("invalid token")
+	}
+	return claims.AdminID, nil
+}

@@ -1,0 +1,19 @@
+.root {
+  min-height: 100vh;
+  background: #eef1f6;
+  color: #111827;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.boot {
+  composes: root;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bootText {
+  color: #6b7280;
+  font-size: 0.95rem;
+}
