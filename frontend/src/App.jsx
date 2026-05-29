@@ -19,6 +19,7 @@ import ForwardMessageModal from "./components/modals/ForwardMessageModal";
 import ToastViewport from "./components/ToastViewport";
 import { api } from "./lib/api";
 import { decryptMessage, ensureDeviceKeys } from "./lib/e2ee";
+import { unwrapUser } from "./lib/sessionUser";
 import {
   registerNotificationServiceWorker,
   requestNotificationPermission,
@@ -62,6 +63,9 @@ export default function App() {
   });
   const [booting, setBooting] = useState(true);
   const [authMode, setAuthMode] = useState("login");
+  const [verifyEmail, setVerifyEmail] = useState("");
+  const [verifyStep, setVerifyStep] = useState("send");
+  const [resetEmail, setResetEmail] = useState("");
   const [error, setError] = useState("");
   const [authInfo, setAuthInfo] = useState("");
   const [currentUser, setCurrentUser] = useState(null);
@@ -102,6 +106,7 @@ export default function App() {
   const incomingCallRef = useRef(null);
   const chatsRef = useRef([]);
   const decryptedCacheRef = useRef(new Map());
+  const sessionUserRef = useRef(null);
 
   const handleMobileBack = useCallback(() => {
     // Keep current chat state for instant return, but block auto-reopen on mobile.
@@ -500,26 +505,42 @@ export default function App() {
   async function bootstrap() {
     try {
       const me = await api.me();
-      await establishSecureSession(me.user);
-
-      const nextChats = await fetchChats();
-      const joinToken = getJoinTokenFromUrl() || readPendingJoinToken();
-      if (joinToken) {
-        await processGroupInviteJoin(joinToken);
+      const user = unwrapUser(me);
+      if (!user?.id) {
+        sessionUserRef.current = null;
+        setCurrentUser(null);
         return;
       }
+      await establishSecureSession(user);
 
-      if (!isMobile && nextChats[0]) {
-        await openChat(nextChats[0].id, { markRead: true, forceScroll: true });
+      try {
+        const nextChats = await fetchChats();
+        const joinToken = getJoinTokenFromUrl() || readPendingJoinToken();
+        if (joinToken) {
+          await processGroupInviteJoin(joinToken);
+          return;
+        }
+
+        if (!isMobile && nextChats[0]) {
+          await openChat(nextChats[0].id, { markRead: true, forceScroll: true });
+        }
+      } catch (chatErr) {
+        console.error("bootstrap chats:", chatErr);
+        setError(chatErr.message || "Не удалось загрузить чаты");
       }
-    } catch {
-      setCurrentUser(null);
+    } catch (err) {
+      sessionUserRef.current = null;
+      if (err?.status === 401 || err?.status === 403) {
+        setCurrentUser(null);
+      }
     } finally {
       setBooting(false);
     }
   }
 
   function applyUserSession(user) {
+    if (!user?.id) return;
+    sessionUserRef.current = user;
     setCurrentUser(user);
     setProfileDraft({
       name: user.name,
@@ -531,18 +552,24 @@ export default function App() {
   }
 
   async function establishSecureSession(user) {
+    const baseUser = unwrapUser(user) || user;
+    if (!baseUser?.id) {
+      throw new Error("Не удалось получить данные пользователя");
+    }
     try {
-      const secureUser = await ensureDeviceKeys(user, api);
-      applyUserSession(secureUser);
-      return secureUser;
+      const secureUser = await ensureDeviceKeys(baseUser, api);
+      const resolved = unwrapUser(secureUser) || secureUser || baseUser;
+      applyUserSession(resolved);
+      return resolved;
     } catch {
-      applyUserSession(user);
-      return user;
+      applyUserSession(baseUser);
+      return baseUser;
     }
   }
 
   async function hydrateMessage(message, options = {}) {
-    if (!message || !currentUser || message.kind === "system") return message;
+    const userId = options.currentUserId ?? sessionUserRef.current?.id ?? currentUser?.id;
+    if (!message || !userId || message.kind === "system") return message;
     const cacheKey = getMessageCacheKey(message);
     const fingerprint = getMessageFingerprint(message, options);
     const cached = decryptedCacheRef.current.get(cacheKey);
@@ -552,7 +579,7 @@ export default function App() {
     }
 
     const decrypted = normalizeForwardedMessage(
-      await decryptMessage(message, currentUser.id, options)
+      await decryptMessage(message, userId, options)
     );
 
     if (decrypted.e2eeState === "ready") {
@@ -638,7 +665,11 @@ export default function App() {
   }
 
   async function completeAuthSession(user) {
-    await establishSecureSession(user);
+    const resolved = unwrapUser(user) || user;
+    if (!resolved?.id) {
+      throw new Error("Не удалось получить данные сессии");
+    }
+    await establishSecureSession(resolved);
 
     const joinToken = getJoinTokenFromUrl() || readPendingJoinToken();
     if (joinToken) {
@@ -646,9 +677,14 @@ export default function App() {
       return;
     }
 
-    const nextChats = await fetchChats();
-    if (!isMobile && nextChats[0]) {
-      await openChat(nextChats[0].id, { markRead: true, forceScroll: true });
+    try {
+      const nextChats = await fetchChats();
+      if (!isMobile && nextChats[0]) {
+        await openChat(nextChats[0].id, { markRead: true, forceScroll: true });
+      }
+    } catch (chatErr) {
+      console.error("load chats after auth:", chatErr);
+      setError(chatErr.message || "Вход выполнен, но чаты не загрузились");
     }
   }
 
@@ -660,12 +696,51 @@ export default function App() {
     const formData = new FormData(event.currentTarget);
 
     try {
+      if (authMode === "verify") {
+        if (verifyStep !== "code") {
+          return;
+        }
+        const payload = await api.verifyEmailConfirm({
+          email: formData.get("email"),
+          code: formData.get("code"),
+        });
+        setVerifyEmail("");
+        setVerifyStep("send");
+        setAuthMode("login");
+        await completeAuthSession(unwrapUser(payload));
+        return;
+      }
+      if (authMode === "forgot") {
+        const email = String(formData.get("email") || "").trim();
+        await api.forgotPassword({ email });
+        setResetEmail(email);
+        setAuthMode("reset");
+        setAuthInfo("Если почта зарегистрирована, мы отправили код для сброса пароля.");
+        return;
+      }
+      if (authMode === "reset") {
+        const newPassword = String(formData.get("newPassword") || "");
+        const confirmPassword = String(formData.get("confirmPassword") || "");
+        if (newPassword !== confirmPassword) {
+          setError("Пароли не совпадают");
+          return;
+        }
+        await api.resetPassword({
+          email: formData.get("email"),
+          code: formData.get("code"),
+          newPassword,
+        });
+        setResetEmail("");
+        setAuthMode("login");
+        setAuthInfo("Пароль обновлён. Войдите с новым паролем.");
+        return;
+      }
       if (authMode === "login") {
         const payload = await api.login({
           identifier: formData.get("identifier"),
           password: formData.get("password"),
         });
-        await completeAuthSession(payload.user);
+        await completeAuthSession(unwrapUser(payload));
         return;
       }
 
@@ -675,15 +750,72 @@ export default function App() {
         email: formData.get("email"),
         password: formData.get("password"),
       });
-      await completeAuthSession(result.user);
+      const email = String(result?.email || formData.get("email") || "").trim();
+      if (result?.pendingVerification || !result?.user) {
+        setVerifyEmail(email);
+        setVerifyStep("send");
+        setAuthMode("verify");
+        setAuthInfo("Аккаунт создан. Нажмите «Подтвердить почту», чтобы получить код.");
+        return;
+      }
+      await completeAuthSession(unwrapUser(result));
     } catch (err) {
-      setError(err.message);
+      const msg = err.message || "Ошибка запроса";
+      if (authMode === "login" && msg === "email not verified") {
+        const identifier = String(formData.get("identifier") || "").trim();
+        if (identifier.includes("@")) {
+          setVerifyEmail(identifier.toLowerCase());
+        }
+        setVerifyStep("send");
+        setAuthMode("verify");
+        setAuthInfo("Нажмите «Подтвердить почту», чтобы получить код.");
+        setError("Почта ещё не подтверждена.");
+        return;
+      }
+      if (authMode === "register" && msg === "это имя пользователя уже занято") {
+        const email = String(formData.get("email") || "").trim();
+        if (email) {
+          setVerifyEmail(email);
+          setVerifyStep("send");
+          setAuthMode("verify");
+          setAuthInfo("Нажмите «Подтвердить почту», чтобы получить код.");
+          setError("Это имя пользователя уже занято.");
+        } else {
+          setError(msg);
+        }
+        return;
+      }
+      if (msg === "try again later") {
+        setError("Подождите немного перед повторной отправкой кода.");
+        return;
+      }
+      if (msg === "invalid code") {
+        setError("Неверный или просроченный код.");
+        return;
+      }
+      setError(msg);
     }
+  }
+
+  async function handleSendVerifyCode(email) {
+    const normalized = String(email || "").trim().toLowerCase();
+    if (!normalized) {
+      throw new Error("Укажите почту");
+    }
+    const result = await api.verifyEmailResend({ email: normalized });
+    setVerifyEmail(normalized);
+    setVerifyStep("code");
+    if (result?.emailDeliveryFailed) {
+      setAuthInfo("Не удалось отправить письмо. Попробуйте позже.");
+      return;
+    }
+    setAuthInfo("");
   }
 
   async function handleLogout() {
     disposeCachedMessages(decryptedCacheRef.current);
     await api.logout();
+    sessionUserRef.current = null;
     setCurrentUser(null);
     setChats([]);
     setMessages([]);
@@ -1094,7 +1226,7 @@ export default function App() {
 
     try {
       const data = await api.updateProfile(profileDraft);
-      applyUserSession(data.user);
+      applyUserSession(unwrapUser(data));
       setProfileEditorOpen(false);
     } catch (err) {
       setError(err.message);
@@ -1106,7 +1238,7 @@ export default function App() {
       const formData = new FormData();
       formData.append("file", file);
       const data = await api.uploadAvatar(formData);
-      applyUserSession(data.user);
+      applyUserSession(unwrapUser(data));
       pushToast("Аватар обновлен");
     } catch (err) {
       setError(err.message);
@@ -1176,12 +1308,21 @@ export default function App() {
         authMode={authMode}
         error={error}
         info={authInfo}
+        verifyEmail={verifyEmail}
+        verifyStep={verifyStep}
+        resetEmail={resetEmail}
         onModeChange={(mode) => {
           setAuthMode(mode);
+          if (mode !== "verify") {
+            setVerifyEmail("");
+            setVerifyStep("send");
+          }
+          if (mode !== "forgot" && mode !== "reset") setResetEmail("");
           setError("");
           setAuthInfo("");
         }}
         onSubmit={handleAuthSubmit}
+        onSendVerifyCode={handleSendVerifyCode}
       />
     );
   }

@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { FiEye, FiEyeOff } from "react-icons/fi";
 import { createPortal } from "react-dom";
 import clsx from "./utils/clsx.js";
 
@@ -16,6 +18,29 @@ export function IconButton({ variant = "ghost", size = "md", className, ...props
 
 export function Input({ className, ...props }) {
   return <input className={clsx("tg-input", className)} {...props} />;
+}
+
+export function PasswordInput({ className, ...props }) {
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <div className="tg-password-field">
+      <input
+        {...props}
+        type={visible ? "text" : "password"}
+        className={clsx("tg-input tg-password-field__input", className)}
+      />
+      <button
+        type="button"
+        className="tg-password-field__toggle"
+        aria-label={visible ? "Скрыть пароль" : "Показать пароль"}
+        aria-pressed={visible}
+        onClick={() => setVisible((prev) => !prev)}
+      >
+        {visible ? <FiEyeOff aria-hidden /> : <FiEye aria-hidden />}
+      </button>
+    </div>
+  );
 }
 
 export function Textarea({ className, ...props }) {

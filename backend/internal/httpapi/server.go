@@ -15,6 +15,7 @@ import (
 
 	"messenger/backend/internal/auth"
 	"messenger/backend/internal/config"
+	"messenger/backend/internal/mail"
 	"messenger/backend/internal/realtime"
 	"messenger/backend/internal/storage"
 	"messenger/backend/internal/store"
@@ -45,6 +46,7 @@ type Server struct {
 	store    *store.Store
 	hub      *realtime.Hub
 	uploader storage.Uploader
+	mailer   *mail.SMTPSender
 	upgrader websocket.Upgrader
 }
 
@@ -58,6 +60,14 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 		store:    st,
 		hub:      hub,
 		uploader: uploader,
+		mailer: mail.NewSMTPSender(mail.SMTPConfig{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Secure:   strings.EqualFold(strings.TrimSpace(cfg.SMTPSecure), "true"),
+			User:     cfg.SMTPUser,
+			Password: cfg.SMTPPassword,
+			From:     cfg.SMTPFrom,
+		}),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -85,6 +95,10 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 	r.Post("/api/auth/register", s.handleRegister)
 	r.Post("/api/auth/login", s.handleLogin)
 	r.Post("/api/auth/logout", s.handleLogout)
+	r.Post("/api/auth/verify/confirm", s.handleVerifyConfirm)
+	r.Post("/api/auth/verify/resend", s.handleVerifyResend)
+	r.Post("/api/auth/forgot-password", s.handleForgotPassword)
+	r.Post("/api/auth/reset-password", s.handleResetPassword)
 
 	r.Post("/api/admin/auth/login", s.handleAdminLogin)
 	r.Post("/api/admin/auth/logout", s.handleAdminLogout)
@@ -106,6 +120,7 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 		protected.Get("/api/auth/me", s.handleMe)
 		protected.Get("/api/users/search", s.handleUserSearch)
 		protected.Patch("/api/users/me", s.handleUpdateProfile)
+		protected.Put("/api/users/me/password", s.handleUpdateMyPassword)
 		protected.Put("/api/users/me/keys", s.handleUpdateKeys)
 		protected.Post("/api/users/me/avatar", s.handleUploadAvatar)
 		protected.Get("/api/chats", s.handleListChats)
@@ -153,7 +168,12 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	user, err := s.store.GetUserByID(r.Context(), currentUserID(r.Context()))
+	userID := currentUserID(r.Context())
+	if err := s.store.VerifyLegacyUserIfNeeded(r.Context(), userID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check email verification")
+		return
+	}
+	user, err := s.store.GetUserByID(r.Context(), userID)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -186,6 +206,30 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+func (s *Server) handleUpdateMyPassword(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if err := s.store.UpdateUserPassword(r.Context(), currentUserID(r.Context()), input.CurrentPassword, input.NewPassword); err != nil {
+		if err == store.ErrForbidden {
+			writeError(w, http.StatusBadRequest, "неверный текущий пароль")
+			return
+		}
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleUpdateKeys(w http.ResponseWriter, r *http.Request) {

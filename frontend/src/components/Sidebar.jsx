@@ -34,8 +34,8 @@ export default function Sidebar({
         <div className="tg-sidebar__me">
           <Avatar user={currentUser} />
           <div className="tg-sidebar__me-copy">
-            <div className="tg-sidebar__me-name">{currentUser.name}</div>
-            <div className="tg-sidebar__me-handle">@{currentUser.username}</div>
+            <div className="tg-sidebar__me-name">{currentUser?.name || "Профиль"}</div>
+            <div className="tg-sidebar__me-handle">@{currentUser?.username || "user"}</div>
           </div>
           <Button className="tg-sidebar__profile" variant="ghost" size="sm" onClick={onOpenProfile}>
             Профиль

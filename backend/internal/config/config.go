@@ -24,6 +24,12 @@ type Config struct {
 	LiveKitAPISecret string
 	AdminUsername    string
 	AdminPassword    string
+	SMTPHost         string
+	SMTPPort         string
+	SMTPSecure       string
+	SMTPUser         string
+	SMTPPassword     string
+	SMTPFrom         string
 }
 
 func Load() Config {
@@ -46,6 +52,12 @@ func Load() Config {
 		LiveKitAPISecret: env("LIVEKIT_API_SECRET", "secret"),
 		AdminUsername:    env("ADMIN_USERNAME", "admin"),
 		AdminPassword:    env("ADMIN_PASSWORD", "admin12345"),
+		SMTPHost:         env("SMTP_HOST", ""),
+		SMTPPort:         env("SMTP_PORT", "587"),
+		SMTPSecure:       env("SMTP_SECURE", "false"),
+		SMTPUser:         env("SMTP_USER", ""),
+		SMTPPassword:     env("SMTP_PASSWORD", ""),
+		SMTPFrom:         env("SMTP_FROM", ""),
 	}
 }
 

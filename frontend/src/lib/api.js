@@ -10,14 +10,21 @@ async function request(path, options = {}) {
     },
   });
 
-  const contentType = response.headers.get("content-type") || "";
-  const payload = contentType.includes("application/json")
-    ? await response.json()
-    : null;
+  const raw = await response.text();
+  let payload = null;
+  if (raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      payload = null;
+    }
+  }
 
   if (!response.ok) {
     const message = payload?.error || "Request failed";
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
@@ -29,8 +36,18 @@ export const api = {
   login: (body) =>
     request("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request("/api/auth/logout", { method: "POST" }),
+  verifyEmailConfirm: (body) =>
+    request("/api/auth/verify/confirm", { method: "POST", body: JSON.stringify(body) }),
+  verifyEmailResend: (body) =>
+    request("/api/auth/verify/resend", { method: "POST", body: JSON.stringify(body) }),
+  forgotPassword: (body) =>
+    request("/api/auth/forgot-password", { method: "POST", body: JSON.stringify(body) }),
+  resetPassword: (body) =>
+    request("/api/auth/reset-password", { method: "POST", body: JSON.stringify(body) }),
   updateProfile: (body) =>
     request("/api/users/me", { method: "PATCH", body: JSON.stringify(body) }),
+  updateMyPassword: (body) =>
+    request("/api/users/me/password", { method: "PUT", body: JSON.stringify(body) }),
   updatePublicKey: (publicKey) =>
     request("/api/users/me/keys", {
       method: "PUT",

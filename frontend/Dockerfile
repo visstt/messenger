@@ -1,18 +1,25 @@
-FROM node:22-alpine AS build
+FROM node:20-alpine AS build
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json* ./
+RUN npm ci
 
 COPY . .
-RUN npm run build
+RUN npm run build && npm install --no-save http-proxy
 
-# alpine:3.21 уже используется backend — не тянем отдельный образ library/nginx с Docker Hub
-FROM alpine:3.21
-RUN apk add --no-cache nginx
+# Продакшен без nginx/apk — только Node (обходит TLS к Docker Hub и dl-cdn.alpinelinux.org)
+FROM node:20-alpine
+WORKDIR /app
 
-COPY nginx.conf /etc/nginx/http.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
+ENV BACKEND_URL=http://backend:8080
+ENV PORT=80
+
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/docker-server.mjs ./
+COPY --from=build /app/node_modules/http-proxy ./node_modules/http-proxy
+COPY --from=build /app/node_modules/eventemitter3 ./node_modules/eventemitter3
+COPY --from=build /app/node_modules/requires-port ./node_modules/requires-port
+COPY --from=build /app/node_modules/follow-redirects ./node_modules/follow-redirects
 
 EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "docker-server.mjs"]

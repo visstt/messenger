@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS users (
 	email TEXT NOT NULL UNIQUE,
 	phone TEXT NOT NULL DEFAULT '',
 	password_hash TEXT NOT NULL,
+	email_verified_at TIMESTAMPTZ,
 	bio TEXT NOT NULL DEFAULT '',
 	avatar_url TEXT NOT NULL DEFAULT '',
 	public_key TEXT NOT NULL DEFAULT '',
@@ -186,6 +187,7 @@ ALTER TABLE chats ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS e2ee_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS public_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS encrypted_payload TEXT NOT NULL DEFAULT '';
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS encryption_meta TEXT NOT NULL DEFAULT '';
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
@@ -193,6 +195,25 @@ ALTER TABLE chats ADD COLUMN IF NOT EXISTS invite_token TEXT NOT NULL DEFAULT ''
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_invite_token ON chats(invite_token) WHERE invite_token <> '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 DROP TABLE IF EXISTS email_tokens;
+
+CREATE TABLE IF NOT EXISTS email_verification_codes (
+	user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+	email TEXT NOT NULL,
+	code_hash TEXT NOT NULL,
+	expires_at TIMESTAMPTZ NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_verification_email ON email_verification_codes(email);
+
+CREATE TABLE IF NOT EXISTS password_reset_codes (
+	email TEXT PRIMARY KEY,
+	code_hash TEXT NOT NULL,
+	expires_at TIMESTAMPTZ NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_email ON password_reset_codes(email);
 
 CREATE TABLE IF NOT EXISTS admin_users (
 	id BIGSERIAL PRIMARY KEY,
@@ -220,7 +241,20 @@ CREATE TABLE IF NOT EXISTS message_audit (
 
 CREATE INDEX IF NOT EXISTS idx_message_audit_chat ON message_audit(chat_id, deleted_at DESC);
 `
-	_, err := s.db.Exec(ctx, schema)
+	if _, err := s.db.Exec(ctx, schema); err != nil {
+		return err
+	}
+
+	// Аккаунты до введения верификации почты — считаем подтверждёнными.
+	// Пользователи с активным кодом в email_verification_codes не трогаем.
+	_, err := s.db.Exec(ctx, `
+		UPDATE users u
+		SET email_verified_at = COALESCE(u.email_verified_at, u.created_at)
+		WHERE u.email_verified_at IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM email_verification_codes c WHERE c.user_id = u.id
+		  )
+	`)
 	return err
 }
 

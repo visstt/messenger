@@ -1,4 +1,5 @@
 import { normalizeMediaUrl } from "../utils/mediaUrls";
+import { unwrapUser } from "./sessionUser";
 
 const E2EE_STORAGE_PREFIX = "messenger-e2ee-keypair-v1:";
 const E2EE_DB_NAME = "messenger-e2ee";
@@ -10,32 +11,36 @@ const KEY_EXPORT_VERSION = 1;
 const KEY_EXPORT_KDF_ITERATIONS = 250000;
 
 export async function ensureDeviceKeys(user, api) {
-  const storedPair = await loadStoredKeyPair(user.id);
+  const account = unwrapUser(user) || user;
+  if (!account?.id) {
+    throw new Error("Не удалось определить пользователя для E2EE");
+  }
+  const storedPair = await loadStoredKeyPair(account.id);
 
   if (!storedPair) {
-    if (user.publicKey) {
+    if (account.publicKey) {
       throw new Error(
         "For this account, E2EE is already enabled, but the local device key was not found."
       );
     }
 
-    const pair = await generateAndStoreKeyPair(user.id);
+    const pair = await generateAndStoreKeyPair(account.id);
     const response = await api.updatePublicKey(pair.publicKey);
-    return response.user;
+    return unwrapUser(response) || account;
   }
 
-  if (user.publicKey && user.publicKey !== storedPair.publicKey) {
+  if (account.publicKey && account.publicKey !== storedPair.publicKey) {
     throw new Error(
       "The local device key does not match the account key. Encrypted sending is disabled for safety."
     );
   }
 
-  if (!user.publicKey) {
+  if (!account.publicKey) {
     const response = await api.updatePublicKey(storedPair.publicKey);
-    return response.user;
+    return unwrapUser(response) || account;
   }
 
-  return user;
+  return account;
 }
 
 export async function hasLocalPrivateKey(userId) {
@@ -245,7 +250,7 @@ export async function decryptMessage(message, currentUserId, options = {}) {
         continue;
       }
 
-      const response = await fetch(normalizeMediaUrl(encryptedUrl), { credentials: "omit" });
+      const response = await fetch(normalizeMediaUrl(encryptedUrl), { credentials: "include" });
       const encryptedBuffer = await response.arrayBuffer();
       const decryptedBuffer = await crypto.subtle.decrypt(
         {

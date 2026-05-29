@@ -248,7 +248,9 @@ export default function MessageList({
               data-message-id={message.id}
               {...bubbleInteractionProps}
             >
-              {!own && <span className="bubble-author">{message.sender.name}</span>}
+              {!own && (
+                <span className="bubble-author">{message.sender?.name || "Участник"}</span>
+              )}
               {message.forwardedFromName && !message.deletedAt && (
                 <div className="forward-chip">
                   <strong>Пересланное сообщение</strong>
@@ -426,7 +428,7 @@ function VoiceMessage({ message }) {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return "";
       });
-      const response = await fetch(normalizeMediaUrl(item.src), { credentials: "omit" });
+      const response = await fetch(normalizeMediaUrl(item.src), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to load voice message");
       const blob = await response.blob();
       const detectedMimeType = await getVoiceMimeType(blob, item);

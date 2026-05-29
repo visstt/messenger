@@ -190,6 +190,43 @@ button {
   background: color-mix(in srgb, var(--input-bg) 82%, white);
 }
 
+.tg-password-field {
+  position: relative;
+  width: 100%;
+}
+
+.tg-password-field__input {
+  padding-right: 44px;
+}
+
+.tg-password-field__toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tg-password-field__toggle:hover {
+  color: var(--accent);
+  background: var(--tg-hover);
+}
+
+.tg-password-field__toggle svg {
+  width: 18px;
+  height: 18px;
+}
+
 .tg-textarea {
   resize: none;
   min-height: 40px;
