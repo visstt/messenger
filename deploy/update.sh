@@ -179,8 +179,12 @@ docker_deploy() {
 
   log "Проверка переменных backend"
   $COMPOSE --env-file "$ROOT/.env" "${COMPOSE_FILES[@]}" exec -T backend sh -c \
-    'echo APP_ORIGIN=$APP_ORIGIN; echo LIVEKIT_PUBLIC_URL=$LIVEKIT_PUBLIC_URL' || \
+    'echo APP_ORIGIN=$APP_ORIGIN; echo LIVEKIT_PUBLIC_URL=$LIVEKIT_PUBLIC_URL; echo SMTP_HOST=$SMTP_HOST; echo SMTP_USER=$SMTP_USER' || \
     warn "Не удалось прочитать env из контейнера backend"
+
+  if ! grep -q '^SMTP_HOST=.' "$ROOT/.env" 2>/dev/null; then
+    warn "SMTP_HOST пуст в .env — письма с кодами не будут отправляться"
+  fi
 }
 
 health_hint() {

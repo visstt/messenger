@@ -30,6 +30,8 @@ services:
     restart: unless-stopped
     build:
       context: ./backend
+    env_file:
+      - .env
     environment:
       PORT: 8080
       DATABASE_URL: postgres://messenger:messenger@postgres:5432/messenger?sslmode=disable
