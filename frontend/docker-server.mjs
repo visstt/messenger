@@ -65,7 +65,7 @@ function sendStatic(req, res) {
 
 const server = createServer((req, res) => {
   const url = req.url || "/";
-  if (url.startsWith("/api/") || url.startsWith("/uploads/")) {
+  if (url === "/healthz" || url.startsWith("/api/") || url.startsWith("/uploads/")) {
     proxy.web(req, res, { target: backend }, (err) => {
       if (!res.headersSent) {
         res.statusCode = 502;

@@ -25,8 +25,74 @@ require_cmd() {
 }
 
 sync_env() {
-  log "Синхронизация .env из deploy/env.production"
+  if [[ -f "$ROOT/.env" ]]; then
+    log ".env уже существует — не перезаписываем (сохраняем секреты)"
+    return 0
+  fi
+  log "Создание .env из deploy/env.production (первый запуск)"
   cp "$ROOT/deploy/env.production" "$ROOT/.env"
+}
+
+env_value() {
+  local key="$1"
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*" key "=" {
+      line = $0
+      sub(/\r$/, "", line)
+      sub(/^[[:space:]]*[^=]*=/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      print line
+      exit
+    }
+  ' "$ROOT/.env"
+}
+
+env_has_value() {
+  local key="$1"
+  [[ -n "$(env_value "$key")" ]]
+}
+
+validate_smtp_env() {
+  local required=(SMTP_HOST SMTP_PORT SMTP_SECURE SMTP_USER SMTP_PASSWORD SMTP_FROM)
+  local missing=()
+  local any_set=0
+  local smtp_password=""
+
+  for key in "${required[@]}"; do
+    if env_has_value "$key"; then
+      any_set=1
+    else
+      missing+=("$key")
+    fi
+  done
+
+  if [[ "$any_set" -eq 0 ]]; then
+    warn "SMTP не настроен (.env: SMTP_* пустые) — письма с кодами не будут отправляться"
+    warn "Если хотите включить SMTP, заполните: ${required[*]}"
+    return 0
+  fi
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    warn "SMTP заполнен частично. Пустые обязательные поля: ${missing[*]}"
+    warn "Исправьте .env и повторите: bash deploy/update.sh"
+    return 1
+  fi
+
+  smtp_password="$(env_value SMTP_PASSWORD)"
+  case "$(printf '%s' "$smtp_password" | tr '[:upper:]' '[:lower:]')" in
+    change-me|changeme|password|12345678|123456789|qwerty123)
+      warn "SMTP_PASSWORD выглядит как шаблонный/слабый пароль (${smtp_password})"
+      warn "Укажите реальный пароль почтового ящика в .env и повторите deploy"
+      return 1
+      ;;
+  esac
+  if [[ ${#smtp_password} -lt 8 ]]; then
+    warn "SMTP_PASSWORD слишком короткий (${#smtp_password} символов)"
+    warn "Укажите корректный пароль почтового ящика в .env и повторите deploy"
+    return 1
+  fi
+
+  log "SMTP: конфигурация заполнена (SMTP_HOST/SMTP_USER/SMTP_FROM/SMTP_PASSWORD)"
 }
 
 git_pull() {
@@ -100,7 +166,7 @@ should_build_desktop() {
     -type f -newer "$DESKTOP_INSTALLER" 2>/dev/null | head -1 | grep -q .; then
     return 0
   fi
-
+x 
   return 1
 }
 
@@ -181,10 +247,6 @@ docker_deploy() {
   $COMPOSE --env-file "$ROOT/.env" "${COMPOSE_FILES[@]}" exec -T backend sh -c \
     'echo APP_ORIGIN=$APP_ORIGIN; echo LIVEKIT_PUBLIC_URL=$LIVEKIT_PUBLIC_URL; echo SMTP_HOST=$SMTP_HOST; echo SMTP_USER=$SMTP_USER' || \
     warn "Не удалось прочитать env из контейнера backend"
-
-  if ! grep -q '^SMTP_HOST=.' "$ROOT/.env" 2>/dev/null; then
-    warn "SMTP_HOST пуст в .env — письма с кодами не будут отправляться"
-  fi
 }
 
 health_hint() {
@@ -201,6 +263,7 @@ main() {
   git_pull
   build_desktop_installer || true
   check_desktop_installer
+  validate_smtp_env
   docker_deploy
   setup_nginx
   health_hint
