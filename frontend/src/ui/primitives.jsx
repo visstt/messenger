@@ -69,9 +69,27 @@ export function Modal({ open, onClose, title, children, className, contentClassN
         if (e.target === e.currentTarget) onClose?.();
       }}
     >
-      <div className={clsx("tg-modal", contentClassName)} role="dialog" aria-modal="true">
-        {title && <div className="tg-modal__title">{title}</div>}
-        <div className="tg-modal__body">{children}</div>
+      <div
+        className={clsx("tg-modal", contentClassName)}
+        role="dialog"
+        aria-modal="true"
+        style={{
+          maxHeight: "min(85vh, 680px)",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {title && (
+          <div className="tg-modal__title" style={{ flexShrink: 0 }}>
+            {title}
+          </div>
+        )}
+        <div
+          className="tg-modal__body"
+          style={{ overflowY: "auto", flex: 1, minHeight: 0 }}
+        >
+          {children}
+        </div>
       </div>
     </div>,
     document.body
