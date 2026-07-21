@@ -237,14 +237,15 @@ button {
   inset: 0;
   z-index: 1000;
   background: var(--overlay);
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 18px;
 }
 
 .tg-modal {
   width: min(100%, 520px);
-  max-height: min(90vh, 700px);
+  max-height: min(100%, 680px);
   display: flex;
   flex-direction: column;
   border-radius: 14px;

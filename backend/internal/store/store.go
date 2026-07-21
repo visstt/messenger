@@ -20,17 +20,18 @@ type Store struct {
 }
 
 type User struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
-	Phone     string    `json:"phone"`
-	Bio       string    `json:"bio"`
-	AvatarURL string    `json:"avatarUrl"`
-	PublicKey      string     `json:"publicKey"`
-	LastSeenAt     *time.Time `json:"lastSeenAt,omitempty"`
-	Online         bool       `json:"online,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
+	ID            int64      `json:"id"`
+	Name          string     `json:"name"`
+	Username      string     `json:"username"`
+	Email         string     `json:"email"`
+	Phone         string     `json:"phone"`
+	Bio           string     `json:"bio"`
+	AvatarURL     string     `json:"avatarUrl"`
+	PublicKey     string     `json:"publicKey"`
+	LastSeenAt    *time.Time `json:"lastSeenAt,omitempty"`
+	Online        bool       `json:"online,omitempty"`
+	EmailVerified bool       `json:"emailVerified"`
+	CreatedAt     time.Time  `json:"createdAt"`
 }
 
 type Message struct {
@@ -356,13 +357,15 @@ func (s *Store) AuthenticateUser(ctx context.Context, identifier, password strin
 	var user User
 	var lastSeen *time.Time
 	var passwordHash string
+	var emailVerified bool
 	err := s.db.QueryRow(ctx, `
 		SELECT `+userSelectColumns+`, password_hash
 		FROM users
 		WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
 	`, strings.TrimSpace(identifier)).
-		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &lastSeen, &user.CreatedAt, &passwordHash)
+		Scan(&user.ID, &user.Name, &user.Username, &user.Email, &user.Phone, &user.Bio, &user.AvatarURL, &user.PublicKey, &lastSeen, &user.CreatedAt, &emailVerified, &passwordHash)
 	user.LastSeenAt = lastSeen
+	user.EmailVerified = emailVerified
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrNotFound
