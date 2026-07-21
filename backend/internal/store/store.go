@@ -853,7 +853,7 @@ func (s *Store) GetChatDetails(ctx context.Context, currentUserID, chatID int64)
 
 func (s *Store) ListChatParticipants(ctx context.Context, chatID int64) ([]User, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT u.id, u.name, u.username, u.email, u.phone, u.bio, u.avatar_url, u.public_key, u.last_seen_at, u.created_at
+		SELECT u.id, u.name, u.username, u.email, u.phone, u.bio, u.avatar_url, u.public_key, u.last_seen_at, u.created_at, (u.email_verified_at IS NOT NULL) AS email_verified
 		FROM chat_participants cp
 		JOIN users u ON u.id = cp.user_id
 		WHERE cp.chat_id = $1
