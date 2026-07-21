@@ -12,6 +12,72 @@ export async function registerNotificationServiceWorker() {
   }
 }
 
+/**
+ * Подписывается на Web Push уведомления и регистрирует подписку на сервере.
+ * Вызывать после получения разрешения на уведомления.
+ * @returns {Promise<boolean>} true если подписка успешно создана
+ */
+export async function subscribeToPushNotifications() {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return false;
+  if (!("PushManager" in window)) return false;
+  if (Notification.permission !== "granted") return false;
+
+  try {
+    // Получаем VAPID публичный ключ с сервера
+    const res = await fetch("/api/push/vapid-key", { credentials: "include" });
+    if (!res.ok) return false;
+    const { publicKey } = await res.json();
+    if (!publicKey) return false;
+
+    const registration = await registerNotificationServiceWorker();
+    if (!registration) return false;
+
+    // Проверяем — нет ли уже активной подписки
+    const existing = await registration.pushManager.getSubscription();
+    let subscription = existing;
+
+    // Если ключ сервера изменился — переподписываемся
+    const existingKey = existing
+      ? btoa(String.fromCharCode(...new Uint8Array(existing.options?.applicationServerKey ?? [])))
+      : null;
+    if (!existing || existingKey !== publicKey) {
+      if (existing) await existing.unsubscribe();
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+    }
+
+    // Отправляем подписку на сервер
+    const subJson = subscription.toJSON();
+    await fetch("/api/push/subscribe", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoint: subJson.endpoint,
+        keys: {
+          p256dh: subJson.keys?.p256dh ?? "",
+          auth: subJson.keys?.auth ?? "",
+        },
+      }),
+    });
+
+    return true;
+  } catch (err) {
+    console.warn("[push] subscribe failed:", err);
+    return false;
+  }
+}
+
+/** Конвертирует VAPID публичный ключ из base64url в Uint8Array (требуется для subscribe). */
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
 export async function requestNotificationPermission() {
   if (!canUseNotifications()) return "unsupported";
   if (Notification.permission === "granted") {

@@ -30,6 +30,8 @@ type Config struct {
 	SMTPUser         string
 	SMTPPassword     string
 	SMTPFrom         string
+	VAPIDPublicKey   string
+	VAPIDPrivateKey  string
 }
 
 func Load() Config {
@@ -58,6 +60,8 @@ func Load() Config {
 		SMTPUser:         env("SMTP_USER", ""),
 		SMTPPassword:     env("SMTP_PASSWORD", ""),
 		SMTPFrom:         env("SMTP_FROM", ""),
+		VAPIDPublicKey:   env("VAPID_PUBLIC_KEY", ""),
+		VAPIDPrivateKey:  env("VAPID_PRIVATE_KEY", ""),
 	}
 }
 

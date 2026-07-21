@@ -240,6 +240,18 @@ CREATE TABLE IF NOT EXISTS message_audit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_message_audit_chat ON message_audit(chat_id, deleted_at DESC);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+	id BIGSERIAL PRIMARY KEY,
+	user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	endpoint TEXT NOT NULL,
+	p256dh TEXT NOT NULL,
+	auth TEXT NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	UNIQUE (user_id, endpoint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
 `
 	if _, err := s.db.Exec(ctx, schema); err != nil {
 		return err

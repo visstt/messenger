@@ -3,6 +3,33 @@ import { cleanupOutdatedCaches, precacheAndRoute } from "workbox-precaching";
 cleanupOutdatedCaches();
 precacheAndRoute(self.__WB_MANIFEST);
 
+// Получаем Web Push уведомление от сервера (работает даже при закрытом приложении).
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+
+  let payload;
+  try {
+    payload = event.data.json();
+  } catch {
+    payload = { title: "Signal", body: event.data.text() };
+  }
+
+  const title = payload.title || "Signal";
+  const options = {
+    body: payload.body || "Новое сообщение",
+    icon: "/signal-notification.svg",
+    badge: "/signal-notification.svg",
+    tag: payload.chatId ? `signal-chat-${payload.chatId}` : "signal-message",
+    data: {
+      url: payload.url || "/",
+      chatId: payload.chatId || null,
+    },
+    renotify: true,
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 

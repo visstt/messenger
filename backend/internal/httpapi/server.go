@@ -16,6 +16,7 @@ import (
 	"messenger/backend/internal/auth"
 	"messenger/backend/internal/config"
 	"messenger/backend/internal/mail"
+	"messenger/backend/internal/push"
 	"messenger/backend/internal/realtime"
 	"messenger/backend/internal/storage"
 	"messenger/backend/internal/store"
@@ -47,6 +48,7 @@ type Server struct {
 	hub      *realtime.Hub
 	uploader storage.Uploader
 	mailer   *mail.SMTPSender
+	pusher   *push.Service
 	upgrader websocket.Upgrader
 }
 
@@ -68,6 +70,7 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 			Password: cfg.SMTPPassword,
 			From:     cfg.SMTPFrom,
 		}),
+		pusher: push.New(st, cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.AppOrigin),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -150,6 +153,11 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 		protected.Post("/api/messages/{messageID}/reactions", s.handleToggleMessageReaction)
 		protected.Delete("/api/messages/{messageID}", s.handleDeleteMessage)
 		protected.Get("/ws", s.handleWebSocket)
+
+		// Web Push
+		protected.Get("/api/push/vapid-key", s.handlePushVapidKey)
+		protected.Post("/api/push/subscribe", s.handlePushSubscribe)
+		protected.Delete("/api/push/subscribe", s.handlePushUnsubscribe)
 	})
 
 	return r
@@ -1051,6 +1059,22 @@ func (s *Server) pushMessageEvents(msg store.Message, recipientIDs []int64, send
 		s.hub.BroadcastToUser(recipientID, event)
 	}
 	s.hub.BroadcastToUser(senderID, event)
+
+	// Отправляем Web Push получателям (для уведомлений при закрытом приложении).
+	if msg.Kind != "system" && s.pusher.Enabled() {
+		title := msg.Sender.Name
+		if title == "" {
+			title = "Signal"
+		}
+		body := messagePreview(msg)
+		payload := push.NotifyPayload{
+			Title:  title,
+			Body:   body,
+			ChatID: msg.ChatID,
+			URL:    "/",
+		}
+		go s.pusher.SendToUsers(context.Background(), recipientIDs, payload)
+	}
 }
 
 func (s *Server) pushChatCreatedEvent(chat store.ChatDetails, creatorID int64) {

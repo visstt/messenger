@@ -134,9 +134,7 @@ func (s *SMTPSender) sendImplicitTLS(ctx context.Context, auth smtp.Auth, from, 
 	}
 	defer client.Close()
 
-	if err := client.Hello(s.cfg.Host); err != nil {
-		return fmt.Errorf("smtp hello: %w", err)
-	}
+	// smtp.NewClient уже выполнил EHLO — повторный Hello() ломает сессию на порту 465.
 	if err := client.Auth(auth); err != nil {
 		return fmt.Errorf("smtp auth: %w", err)
 	}

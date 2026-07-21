@@ -26,6 +26,7 @@ import {
   setUnreadTitle,
   shouldNotifyForIncomingMessage,
   showMessageNotification,
+  subscribeToPushNotifications,
 } from "./utils/browserNotifications";
 import { getChatTitle } from "./utils/chats";
 import { mergeUserPresence } from "./utils/presence";
@@ -151,7 +152,17 @@ export default function App() {
     }
 
     registerNotificationServiceWorker();
-    const requestOnInteraction = () => requestNotificationPermission();
+    // Если разрешение уже выдано ранее — подписываемся на Web Push сразу.
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      subscribeToPushNotifications().catch(() => null);
+    }
+    const requestOnInteraction = () =>
+      requestNotificationPermission().then((permission) => {
+        if (permission === "granted") {
+          // Подписываемся на Web Push (уведомления при закрытом приложении).
+          subscribeToPushNotifications().catch(() => null);
+        }
+      });
     const resetUnread = () => {
       if (document.visibilityState === "visible" && document.hasFocus()) {
         setUnreadNotificationCount(0);
