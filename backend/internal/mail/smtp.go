@@ -57,16 +57,29 @@ func (s *SMTPSender) Send(ctx context.Context, to string, subject string, bodyTe
 	}
 
 	msg := []byte(buildMessage(from, to, subject, bodyText))
-	auth := smtp.PlainAuth("", s.cfg.User, s.cfg.Password, s.cfg.Host)
 
 	if s.cfg.Secure {
-		return s.sendImplicitTLS(ctx, auth, from, to, msg)
+		return s.sendImplicitTLS(ctx, from, to, msg)
 	}
-	return s.sendSTARTTLS(ctx, auth, from, to, msg)
+	return s.sendSTARTTLS(ctx, from, to, msg)
+}
+
+
+// selectAuth выбирает метод авторизации в зависимости от поддерживаемых сервером.
+func (s *SMTPSender) selectAuth(client *smtp.Client) smtp.Auth {
+	ok, ext := client.Extension("AUTH")
+	if !ok {
+		return smtp.PlainAuth("", s.cfg.User, s.cfg.Password, s.cfg.Host)
+	}
+	extUpper := strings.ToUpper(ext)
+	if !strings.Contains(extUpper, "PLAIN") && strings.Contains(extUpper, "LOGIN") {
+		return LoginAuth(s.cfg.User, s.cfg.Password)
+	}
+	return smtp.PlainAuth("", s.cfg.User, s.cfg.Password, s.cfg.Host)
 }
 
 // sendSTARTTLS — порт 587 (reg.ru): стандартный поток Go без лишних Hello().
-func (s *SMTPSender) sendSTARTTLS(ctx context.Context, auth smtp.Auth, from, to string, msg []byte) error {
+func (s *SMTPSender) sendSTARTTLS(ctx context.Context, from, to string, msg []byte) error {
 	addr := net.JoinHostPort(s.cfg.Host, s.cfg.Port)
 	dialer := &net.Dialer{Timeout: 15 * time.Second}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
@@ -90,7 +103,8 @@ func (s *SMTPSender) sendSTARTTLS(ctx context.Context, auth smtp.Auth, from, to 
 	if err := client.StartTLS(&tls.Config{ServerName: s.cfg.Host}); err != nil {
 		return fmt.Errorf("smtp starttls: %w", err)
 	}
-	// Go 1.24+: StartTLS уже делает повторный EHLO — второй Hello() ломает отправку.
+
+	auth := s.selectAuth(client)
 	if err := client.Auth(auth); err != nil {
 		return fmt.Errorf("smtp auth: %w", err)
 	}
@@ -114,7 +128,7 @@ func (s *SMTPSender) sendSTARTTLS(ctx context.Context, auth smtp.Auth, from, to 
 	return client.Quit()
 }
 
-func (s *SMTPSender) sendImplicitTLS(ctx context.Context, auth smtp.Auth, from, to string, msg []byte) error {
+func (s *SMTPSender) sendImplicitTLS(ctx context.Context, from, to string, msg []byte) error {
 	addr := net.JoinHostPort(s.cfg.Host, s.cfg.Port)
 	dialer := &net.Dialer{Timeout: 15 * time.Second}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
@@ -134,7 +148,7 @@ func (s *SMTPSender) sendImplicitTLS(ctx context.Context, auth smtp.Auth, from, 
 	}
 	defer client.Close()
 
-	// smtp.NewClient уже выполнил EHLO — повторный Hello() ломает сессию на порту 465.
+	auth := s.selectAuth(client)
 	if err := client.Auth(auth); err != nil {
 		return fmt.Errorf("smtp auth: %w", err)
 	}
@@ -157,6 +171,40 @@ func (s *SMTPSender) sendImplicitTLS(ctx context.Context, auth smtp.Auth, from, 
 	}
 	return client.Quit()
 }
+
+type loginAuth struct {
+	username, password string
+}
+
+func LoginAuth(username, password string) smtp.Auth {
+	return &loginAuth{username, password}
+}
+
+func (a *loginAuth) Start(server *smtp.ServerInfo) (string, []byte, error) {
+	return "LOGIN", nil, nil
+}
+
+func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
+	if more {
+		switch string(fromServer) {
+		case "Username:", "username:", "USER:", "user:":
+			return []byte(a.username), nil
+		case "Password:", "password:", "PASS:", "pass:":
+			return []byte(a.password), nil
+		default:
+			lower := strings.ToLower(string(fromServer))
+			if strings.Contains(lower, "user") {
+				return []byte(a.username), nil
+			}
+			if strings.Contains(lower, "pass") {
+				return []byte(a.password), nil
+			}
+			return nil, fmt.Errorf("unexpected smtp challenge: %s", string(fromServer))
+		}
+	}
+	return nil, nil
+}
+
 
 func buildMessage(from string, to string, subject string, bodyText string) string {
 	subject = strings.TrimSpace(subject)

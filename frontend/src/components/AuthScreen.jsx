@@ -194,9 +194,6 @@ export default function AuthScreen({
               <Button type="button" variant="ghost" onClick={() => onModeChange("forgot")}>
                 Забыли пароль?
               </Button>
-              <Button type="button" variant="ghost" onClick={() => onModeChange("verify")}>
-                Подтвердить почту
-              </Button>
             </>
           )}
 

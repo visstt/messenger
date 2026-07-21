@@ -1473,6 +1473,18 @@ export default function App() {
           setProfileOpen(false);
           setSettingsOpen(true);
         }}
+        onVerifyEmail={() => {
+          const emailToVerify = currentUser?.email || "";
+          setProfileOpen(false);
+          handleLogout().then(() => {
+            if (emailToVerify) {
+              setVerifyEmail(emailToVerify);
+              setVerifyStep("send");
+              setAuthMode("verify");
+              setAuthInfo("Нажмите «Подтвердить почту», чтобы получить код.");
+            }
+          }).catch(() => null);
+        }}
       />
 
       <SettingsModal

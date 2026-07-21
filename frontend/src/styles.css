@@ -244,6 +244,9 @@ button {
 
 .tg-modal {
   width: min(100%, 520px);
+  max-height: min(90vh, 700px);
+  display: flex;
+  flex-direction: column;
   border-radius: 14px;
   background: var(--tg-panel-bg);
   border: 1px solid var(--line);
@@ -254,10 +257,14 @@ button {
   padding: 14px 16px;
   border-bottom: 1px solid var(--line);
   font-weight: 700;
+  flex-shrink: 0;
 }
 
 .tg-modal__body {
   padding: 14px 16px 16px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .tg-profile {

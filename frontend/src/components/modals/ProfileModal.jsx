@@ -18,6 +18,7 @@ export default function ProfileModal({
   onLogout,
   onEdit,
   onOpenSettings,
+  onVerifyEmail,
 }) {
   if (!open || !user) return null;
 
@@ -81,7 +82,27 @@ export default function ProfileModal({
           </div>
           <div className="tg-profile__row-copy">
             <div className="tg-profile__row-label">Почта</div>
-            <div className="tg-profile__row-value">{user.email}</div>
+            <div className="tg-profile__row-value" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+              <span>{user.email}</span>
+              <button
+                type="button"
+                onClick={onVerifyEmail}
+                style={{
+                  padding: "4px 10px",
+                  fontSize: "0.78rem",
+                  borderRadius: "8px",
+                  border: "1px solid var(--tg-theme-link-color, #2481cc)",
+                  background: "transparent",
+                  color: "var(--tg-theme-link-color, #2481cc)",
+                  cursor: "pointer",
+                  fontWeight: "600",
+                  transition: "all 0.2s ease",
+                }}
+                className="tg-profile__verify-btn"
+              >
+                Подтвердить
+              </button>
+            </div>
           </div>
         </div>
         <div className="tg-profile__row" role="listitem">
