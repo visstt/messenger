@@ -64,7 +64,7 @@ export const api = {
   sendSupportMessage: (conversationId, message) =>
     request(`/api/support/conversations/${conversationId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ text: message }),
     }),
   createPrivateChat: (userId) =>
     request("/api/chats/private", {
