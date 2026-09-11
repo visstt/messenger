@@ -807,6 +807,10 @@ button {
   background-size: 72px 72px;
 }
 
+.tg-chat-area:has(.support-panel) {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 /* Desktop: wrapper is transparent to the parent grid; mobile: flex column (see @media). */
 .tg-chat-stack {
   display: contents;
