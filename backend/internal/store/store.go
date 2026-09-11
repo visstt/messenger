@@ -254,13 +254,51 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
 `
+
 	if _, err := s.db.Exec(ctx, schema); err != nil {
+		return err
+	}
+
+	_, err := s.db.Exec(ctx, `
+	CREATE TABLE IF NOT EXISTS support_conversations (
+		id BIGSERIAL PRIMARY KEY,
+		external_id TEXT NOT NULL UNIQUE,
+		visitor_name TEXT NOT NULL DEFAULT '',
+		visitor_phone TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'open',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	CREATE TABLE IF NOT EXISTS support_messages (
+		id BIGSERIAL PRIMARY KEY,
+		conversation_id BIGINT NOT NULL
+			REFERENCES support_conversations(id)
+			ON DELETE CASCADE,
+		sender_type TEXT NOT NULL,
+		sender_user_id BIGINT
+			REFERENCES users(id)
+			ON DELETE SET NULL,
+		text TEXT NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_support_messages_conversation
+		ON support_messages(conversation_id, created_at);
+
+	CREATE TABLE IF NOT EXISTS support_workers (
+		user_id BIGINT PRIMARY KEY
+			REFERENCES users(id)
+			ON DELETE CASCADE
+	);
+`)
+	if err != nil {
 		return err
 	}
 
 	// Аккаунты до введения верификации почты — считаем подтверждёнными.
 	// Пользователи с активным кодом в email_verification_codes не трогаем.
-	_, err := s.db.Exec(ctx, `
+	_, err = s.db.Exec(ctx, `
 		UPDATE users u
 		SET email_verified_at = COALESCE(u.email_verified_at, u.created_at)
 		WHERE u.email_verified_at IS NULL
@@ -268,6 +306,7 @@ CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(
 		    SELECT 1 FROM email_verification_codes c WHERE c.user_id = u.id
 		  )
 	`)
+
 	return err
 }
 
@@ -987,10 +1026,10 @@ func (s *Store) ListChats(ctx context.Context, currentUserID int64) ([]ChatPrevi
 			}
 			if senderID != nil {
 				preview.LastMessage.Sender = User{
-					ID:            derefInt64(senderID),
-					Name:          derefString(senderName),
-					Username:      derefString(senderUsername),
-					Email:         derefString(senderEmail),
+					ID:        derefInt64(senderID),
+					Name:      derefString(senderName),
+					Username:  derefString(senderUsername),
+					Email:     derefString(senderEmail),
 					Phone:     derefString(senderPhone),
 					Bio:       derefString(senderBio),
 					AvatarURL: derefString(senderAvatar),
@@ -1539,4 +1578,3 @@ func derefTime(v *time.Time) time.Time {
 	}
 	return *v
 }
-

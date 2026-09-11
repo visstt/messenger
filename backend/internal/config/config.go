@@ -32,6 +32,8 @@ type Config struct {
 	SMTPFrom         string
 	VAPIDPublicKey   string
 	VAPIDPrivateKey  string
+	SupportSecret    string
+	SupportMedikURL  string
 }
 
 func Load() Config {
@@ -62,6 +64,8 @@ func Load() Config {
 		SMTPFrom:         env("SMTP_FROM", ""),
 		VAPIDPublicKey:   env("VAPID_PUBLIC_KEY", ""),
 		VAPIDPrivateKey:  env("VAPID_PRIVATE_KEY", ""),
+		SupportSecret:    env("SUPPORT_SECRET", ""),
+		SupportMedikURL:  env("SUPPORT_MEDIK_URL", ""),
 	}
 }
 

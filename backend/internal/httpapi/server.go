@@ -106,6 +106,11 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 	r.Post("/api/admin/auth/login", s.handleAdminLogin)
 	r.Post("/api/admin/auth/logout", s.handleAdminLogout)
 
+	r.Post(
+		"/api/internal/support/messages",
+		s.handleSupportCreateVisitorMessage,
+	)
+
 	r.Group(func(admin chi.Router) {
 		admin.Use(s.adminAuthMiddleware)
 		admin.Get("/api/admin/auth/me", s.handleAdminMe)
@@ -115,10 +120,38 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 		admin.Put("/api/admin/users/{userID}/password", s.handleAdminUpdateUserPassword)
 		admin.Get("/api/admin/users/{userID}/chats", s.handleAdminListUserChats)
 		admin.Get("/api/admin/chats/{chatID}/messages", s.handleAdminListChatMessages)
+		admin.Get(
+			"/api/admin/support/workers",
+			s.handleAdminListSupportWorkers,
+		)
+
+		admin.Post(
+			"/api/admin/support/workers/{userID}",
+			s.handleAdminAddSupportWorker,
+		)
+
+		admin.Delete(
+			"/api/admin/support/workers/{userID}",
+			s.handleAdminRemoveSupportWorker,
+		)
 	})
 
 	r.Group(func(protected chi.Router) {
 		protected.Use(s.authMiddleware)
+		protected.Get(
+			"/api/support/conversations",
+			s.handleSupportListConversations,
+		)
+
+		protected.Get(
+			"/api/support/conversations/{conversationID}/messages",
+			s.handleSupportListMessages,
+		)
+
+		protected.Post(
+			"/api/support/conversations/{conversationID}/messages",
+			s.handleSupportCreateMessage,
+		)
 
 		protected.Get("/api/auth/me", s.handleMe)
 		protected.Get("/api/users/search", s.handleUserSearch)
