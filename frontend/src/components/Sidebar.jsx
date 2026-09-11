@@ -2,7 +2,7 @@ import Avatar from "./Avatar";
 import { getChatAvatar, getChatTitle } from "../utils/chats";
 import { renderPreview } from "../utils/messages";
 import { Button, IconButton, Input, SectionTitle } from "../ui";
-import { FiSearch, FiUsers } from "react-icons/fi";
+import { FiHeadphones, FiSearch, FiUsers } from "react-icons/fi";
 
 export default function Sidebar({
   currentUser,
@@ -13,6 +13,10 @@ export default function Sidebar({
   onOpenSearch,
   onOpenGroup,
   onOpenChat,
+  supportWorker,
+  supportUnreadCount,
+  supportOpen,
+  onOpenSupport,
 }) {
   return (
     <aside className="tg-sidebar">
@@ -44,6 +48,25 @@ export default function Sidebar({
         <div className="tg-sidebar__search">
           <Input placeholder="Поиск" aria-label="Поиск" />
         </div>
+
+        {supportWorker && (
+          <button
+            type="button"
+            className={`tg-support-entry ${supportOpen ? "active" : ""}`}
+            onClick={onOpenSupport}
+          >
+            <span className="tg-support-entry__icon">
+              <FiHeadphones />
+            </span>
+            <span className="tg-support-entry__copy">
+              <strong>Поддержка</strong>
+              <span>Обращения с SD Медик</span>
+            </span>
+            {supportUnreadCount > 0 && (
+              <span className="tg-badge">{supportUnreadCount}</span>
+            )}
+          </button>
+        )}
       </div>
 
       <>

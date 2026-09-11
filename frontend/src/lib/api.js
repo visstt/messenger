@@ -58,6 +58,14 @@ export const api = {
   searchUsers: (query) =>
     request(`/api/users/search?query=${encodeURIComponent(query)}`),
   listChats: () => request("/api/chats"),
+  listSupportConversations: () => request("/api/support/conversations"),
+  listSupportMessages: (conversationId) =>
+    request(`/api/support/conversations/${conversationId}/messages`),
+  sendSupportMessage: (conversationId, message) =>
+    request(`/api/support/conversations/${conversationId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    }),
   createPrivateChat: (userId) =>
     request("/api/chats/private", {
       method: "POST",

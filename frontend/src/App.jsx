@@ -6,6 +6,7 @@ import Composer from "./components/Composer";
 import IncomingCallModal from "./components/IncomingCallModal";
 import MessageList from "./components/MessageList";
 import Sidebar from "./components/Sidebar";
+import SupportPanel from "./components/SupportPanel";
 import ImageViewerModal from "./components/modals/ImageViewerModal";
 import ConfirmModal from "./components/modals/ConfirmModal";
 import EditMessageModal from "./components/modals/EditMessageModal";
@@ -72,6 +73,16 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [chats, setChats] = useState([]);
   const [activeChat, setActiveChat] = useState(null);
+  const [supportWorker, setSupportWorker] = useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
+  const [supportConversations, setSupportConversations] = useState([]);
+  const [activeSupportConversationId, setActiveSupportConversationId] = useState(null);
+  const [supportMessages, setSupportMessages] = useState([]);
+  const [supportLoadingConversations, setSupportLoadingConversations] = useState(false);
+  const [supportLoadingMessages, setSupportLoadingMessages] = useState(false);
+  const [supportSending, setSupportSending] = useState(false);
+  const [supportError, setSupportError] = useState("");
+  const [supportUnreadCount, setSupportUnreadCount] = useState(0);
   const [mobileScreen, setMobileScreen] = useState("sidebar");
   const [messages, setMessages] = useState([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -102,6 +113,7 @@ export default function App() {
   const [loadingChatId, setLoadingChatId] = useState(null);
   const socketRef = useRef(null);
   const activeChatIdRef = useRef(null);
+  const activeSupportConversationIdRef = useRef(null);
   const manualMobileExitRef = useRef(false);
   const activeCallRef = useRef(null);
   const incomingCallRef = useRef(null);
@@ -117,7 +129,8 @@ export default function App() {
     setMobileScreen("sidebar");
   }, []);
 
-  const mobileChatOpen = isMobile && Boolean(activeChat) && mobileScreen === "chat";
+  const mobileChatOpen =
+    isMobile && (Boolean(activeChat) || supportOpen) && mobileScreen === "chat";
   const swipeBackRef = useSwipeBack(mobileChatOpen, handleMobileBack);
 
   const activeTyping = activeChat ? typingState[activeChat.id] : false;
@@ -127,6 +140,10 @@ export default function App() {
   useEffect(() => {
     activeChatIdRef.current = activeChat?.id ?? null;
   }, [activeChat?.id]);
+
+  useEffect(() => {
+    activeSupportConversationIdRef.current = activeSupportConversationId;
+  }, [activeSupportConversationId]);
 
   useEffect(() => {
     activeCallRef.current = activeCall;
@@ -185,6 +202,51 @@ export default function App() {
   useEffect(() => {
     setReplyDraft(null);
   }, [activeChat?.id]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setSupportWorker(false);
+      setSupportOpen(false);
+      setSupportConversations([]);
+      setActiveSupportConversationId(null);
+      setSupportMessages([]);
+      setSupportUnreadCount(0);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function detectSupportWorker() {
+      try {
+        const data = await api.listSupportConversations();
+        if (cancelled) return;
+
+        const items = normalizeSupportConversations(data);
+        setSupportWorker(true);
+        setSupportConversations(items);
+        setSupportUnreadCount(
+          items.reduce(
+            (total, item) => total + Number(item.unreadCount || 0),
+            0
+          )
+        );
+      } catch (err) {
+        if (cancelled) return;
+        // Endpoint закрыт для обычных пользователей — значит это не worker.
+        if (err?.status === 401 || err?.status === 403) {
+          setSupportWorker(false);
+          return;
+        }
+        console.error("support bootstrap:", err);
+      }
+    }
+
+    detectSupportWorker();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -269,6 +331,50 @@ export default function App() {
       ws.onmessage = async (event) => {
         const payload = JSON.parse(event.data);
         const activeId = activeChatIdRef.current;
+
+        if (payload.type === "support:message") {
+          const conversation = payload.data?.conversation;
+          const message = payload.data?.message;
+
+          if (conversation?.id) {
+            setSupportWorker(true);
+            setSupportConversations((prev) => {
+              const exists = prev.some(
+                (item) => Number(item.id) === Number(conversation.id)
+              );
+
+              const next = exists
+                ? prev.map((item) =>
+                    Number(item.id) === Number(conversation.id)
+                      ? { ...item, ...conversation, lastMessage: message }
+                      : item
+                  )
+                : [{ ...conversation, lastMessage: message }, ...prev];
+
+              return next.sort(
+                (left, right) =>
+                  new Date(right.updatedAt || right.createdAt || 0).getTime() -
+                  new Date(left.updatedAt || left.createdAt || 0).getTime()
+              );
+            });
+
+            if (
+              Number(activeSupportConversationIdRef.current) ===
+              Number(conversation.id)
+            ) {
+              setSupportMessages((prev) => {
+                if (prev.some((item) => Number(item.id) === Number(message?.id))) {
+                  return prev;
+                }
+                return message ? [...prev, message] : prev;
+              });
+            } else if (message?.senderType === "visitor") {
+              setSupportUnreadCount((count) => count + 1);
+            }
+          }
+
+          return;
+        }
 
         if (payload.type === "message:upsert") {
           const message = await hydrateMessage(payload.data.message, { includeFiles: true });
@@ -634,6 +740,137 @@ export default function App() {
     return nextChats;
   }
 
+  async function loadSupportConversations(options = {}) {
+    const { silent = false } = options;
+    if (!silent) setSupportLoadingConversations(true);
+
+    try {
+      const data = await api.listSupportConversations();
+      const items = normalizeSupportConversations(data);
+      setSupportWorker(true);
+      setSupportConversations(items);
+      setSupportUnreadCount(
+        items.reduce(
+          (total, item) => total + Number(item.unreadCount || 0),
+          0
+        )
+      );
+      return items;
+    } finally {
+      if (!silent) setSupportLoadingConversations(false);
+    }
+  }
+
+  async function openSupportConversation(conversationId) {
+    if (!conversationId) return;
+
+    setSupportOpen(true);
+    setActiveChat(null);
+    activeChatIdRef.current = null;
+    setActiveSupportConversationId(Number(conversationId));
+    setSupportLoadingMessages(true);
+    setSupportError("");
+
+    try {
+      const data = await api.listSupportMessages(conversationId);
+      const items = normalizeSupportMessages(data);
+      setSupportMessages(items);
+
+      setSupportConversations((prev) =>
+        prev.map((conversation) =>
+          Number(conversation.id) === Number(conversationId)
+            ? { ...conversation, unreadCount: 0 }
+            : conversation
+        )
+      );
+
+      setSupportUnreadCount((count) => {
+        const conversation = supportConversations.find(
+          (item) => Number(item.id) === Number(conversationId)
+        );
+        return Math.max(0, count - Number(conversation?.unreadCount || 0));
+      });
+
+      if (isMobile) {
+        setMobileScreen("chat");
+      }
+    } catch (err) {
+      setSupportError(err.message || "Не удалось загрузить обращение");
+    } finally {
+      setSupportLoadingMessages(false);
+    }
+  }
+
+  async function sendSupportMessage(conversationId, message) {
+    if (!conversationId || !message.trim()) return;
+
+    setSupportSending(true);
+    setSupportError("");
+
+    try {
+      const data = await api.sendSupportMessage(conversationId, message.trim());
+
+      if (data?.message) {
+        setSupportMessages((prev) => {
+          if (prev.some((item) => Number(item.id) === Number(data.message.id))) {
+            return prev;
+          }
+          return [...prev, data.message];
+        });
+
+        setSupportConversations((prev) =>
+          prev.map((conversation) =>
+            Number(conversation.id) === Number(conversationId)
+              ? {
+                  ...conversation,
+                  updatedAt: data.message.createdAt || conversation.updatedAt,
+                  lastMessage: data.message,
+                  unreadCount: 0,
+                }
+              : conversation
+          )
+        );
+      }
+
+      return data;
+    } catch (err) {
+      setSupportError(err.message || "Не удалось отправить ответ");
+      throw err;
+    } finally {
+      setSupportSending(false);
+    }
+  }
+
+  function openSupport() {
+    setError("");
+    setSupportError("");
+    setSupportOpen(true);
+    setActiveChat(null);
+    setMessages([]);
+    activeChatIdRef.current = null;
+    setActiveSupportConversationId(null);
+    setSupportMessages([]);
+
+    loadSupportConversations({ silent: true }).catch((err) => {
+      setSupportError(err.message || "Не удалось загрузить обращения");
+    });
+
+    if (isMobile) {
+      setMobileScreen("chat");
+    }
+  }
+
+  function closeSupport() {
+    setSupportOpen(false);
+    setActiveSupportConversationId(null);
+    activeSupportConversationIdRef.current = null;
+    setSupportMessages([]);
+    setSupportError("");
+    if (isMobile) {
+      setMobileScreen("sidebar");
+    }
+  }
+
   async function openChat(chatId, options = {}) {
     const { markRead = true, forceScroll = false, silent = false } = options;
     if (!chatId) return;
@@ -831,6 +1068,13 @@ export default function App() {
     setChats([]);
     setMessages([]);
     setActiveChat(null);
+    setSupportWorker(false);
+    setSupportOpen(false);
+    setSupportConversations([]);
+    setActiveSupportConversationId(null);
+    setSupportMessages([]);
+    setSupportUnreadCount(0);
+    setSupportError("");
     setError("");
     setProfileOpen(false);
     setSettingsOpen(false);
@@ -1354,13 +1598,34 @@ export default function App() {
         onOpenProfile={() => setProfileOpen(true)}
         onOpenSearch={() => setSearchOpen(true)}
         onOpenGroup={() => setGroupOpen(true)}
-        onOpenChat={(chatId) => openChat(chatId, { markRead: true, forceScroll: true })}
+        onOpenChat={(chatId) => {
+          setSupportOpen(false);
+          setSupportError("");
+          openChat(chatId, { markRead: true, forceScroll: true });
+        }}
+        supportWorker={supportWorker}
+        supportUnreadCount={supportUnreadCount}
+        supportOpen={supportOpen}
+        onOpenSupport={openSupport}
       />
 
       <main
         className={`tg-chat-area${mobileChatOpen ? " tg-chat-area--mobile-open" : ""}`}
       >
-        {activeChat ? (
+        {supportOpen ? (
+          <SupportPanel
+            conversations={supportConversations}
+            activeConversationId={activeSupportConversationId}
+            messages={supportMessages}
+            loadingConversations={supportLoadingConversations}
+            loadingMessages={supportLoadingMessages}
+            sending={supportSending}
+            error={supportError}
+            onOpenConversation={openSupportConversation}
+            onSend={sendSupportMessage}
+            onBack={closeSupport}
+          />
+        ) : activeChat ? (
           <div
             className="tg-chat-stack"
             ref={swipeBackRef}
@@ -1559,6 +1824,18 @@ export default function App() {
       <ToastViewport toasts={toasts} />
     </div>
   );
+}
+
+function normalizeSupportConversations(data) {
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.conversations)) return data.conversations;
+  return [];
+}
+
+function normalizeSupportMessages(data) {
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.messages)) return data.messages;
+  return [];
 }
 
 function moveImageViewer(viewer, delta) {
