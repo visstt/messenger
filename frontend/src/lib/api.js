@@ -66,6 +66,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text: message }),
     }),
+  unassignSupportConversation: (conversationId) =>
+    request(`/api/support/conversations/${conversationId}/assign`, {
+      method: "DELETE",
+    }),
   createPrivateChat: (userId) =>
     request("/api/chats/private", {
       method: "POST",

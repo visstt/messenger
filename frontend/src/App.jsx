@@ -370,11 +370,48 @@ export default function App() {
               });
             } else if (message?.senderType === "visitor") {
               setSupportUnreadCount((count) => count + 1);
+
+              // Браузерное уведомление о сообщении от клиента поддержки
+              const visitorName = conversation.visitorName?.trim() ||
+                `Посетитель #${conversation.id}`;
+              const preview = message.text
+                ? message.text.length > 60
+                  ? message.text.slice(0, 60) + "…"
+                  : message.text
+                : "Новое сообщение";
+
+              shouldNotifyForIncomingMessage(false).then((shouldNotify) => {
+                if (shouldNotify) {
+                  showMessageNotification({
+                    title: "Поддержка: " + visitorName,
+                    body: preview,
+                    tag: `support-conversation-${conversation.id}`,
+                    onClick: () => {
+                      setSupportOpen(true);
+                    },
+                  }).catch(() => null);
+                }
+              }).catch(() => null);
             }
           }
 
           return;
         }
+
+        if (payload.type === "support:conversation:assigned") {
+          const updatedConversation = payload.data?.conversation;
+          if (updatedConversation?.id) {
+            setSupportConversations((prev) =>
+              prev.map((item) =>
+                Number(item.id) === Number(updatedConversation.id)
+                  ? { ...item, ...updatedConversation }
+                  : item
+              )
+            );
+          }
+          return;
+        }
+
 
         if (payload.type === "message:upsert") {
           const message = await hydrateMessage(payload.data.message, { includeFiles: true });
@@ -838,6 +875,23 @@ export default function App() {
       throw err;
     } finally {
       setSupportSending(false);
+    }
+  }
+
+  async function unassignSupportConversation(conversationId) {
+    if (!conversationId) return;
+    try {
+      await api.unassignSupportConversation(conversationId);
+      // Локально обновим — сервер тоже пришлёт событие support:conversation:assigned
+      setSupportConversations((prev) =>
+        prev.map((conv) =>
+          Number(conv.id) === Number(conversationId)
+            ? { ...conv, assignedToUserId: null, assignedToName: "" }
+            : conv
+        )
+      );
+    } catch (err) {
+      setSupportError(err.message || "Не удалось освободить диалог");
     }
   }
 
@@ -1621,8 +1675,10 @@ export default function App() {
             loadingMessages={supportLoadingMessages}
             sending={supportSending}
             error={supportError}
+            currentUser={currentUser}
             onOpenConversation={openSupportConversation}
             onSend={sendSupportMessage}
+            onUnassign={unassignSupportConversation}
             onBack={closeSupport}
           />
         ) : activeChat ? (

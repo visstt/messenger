@@ -153,6 +153,11 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 			s.handleSupportCreateMessage,
 		)
 
+		protected.Delete(
+			"/api/support/conversations/{conversationID}/assign",
+			s.handleSupportUnassign,
+		)
+
 		protected.Get("/api/auth/me", s.handleMe)
 		protected.Get("/api/users/search", s.handleUserSearch)
 		protected.Patch("/api/users/me", s.handleUpdateProfile)

@@ -34,6 +34,8 @@ type Config struct {
 	VAPIDPrivateKey  string
 	SupportSecret    string
 	SupportMedikURL  string
+	MaxBotURL        string
+	MaxBotSecret     string
 }
 
 func Load() Config {
@@ -66,6 +68,8 @@ func Load() Config {
 		VAPIDPrivateKey:  env("VAPID_PRIVATE_KEY", ""),
 		SupportSecret:    env("SUPPORT_SECRET", ""),
 		SupportMedikURL:  env("SUPPORT_MEDIK_URL", ""),
+		MaxBotURL:        env("MAX_BOT_URL", ""),
+		MaxBotSecret:     env("MAX_BOT_SECRET", ""),
 	}
 }
 

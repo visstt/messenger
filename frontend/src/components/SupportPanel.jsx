@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FiArrowLeft, FiLifeBuoy, FiSend } from "react-icons/fi";
+import { FiArrowLeft, FiLifeBuoy, FiSend, FiUnlock, FiUser } from "react-icons/fi";
 
 function formatTime(value) {
   if (!value) return "";
@@ -43,8 +43,10 @@ export default function SupportPanel({
   loadingMessages,
   sending,
   error,
+  currentUser,
   onOpenConversation,
   onSend,
+  onUnassign,
   onBack,
 }) {
   const [draft, setDraft] = useState("");
@@ -58,6 +60,20 @@ export default function SupportPanel({
     [conversations, activeConversationId]
   );
 
+  // Определяем: занят ли диалог другим оператором
+  const isAssignedToOther = useMemo(() => {
+    if (!activeConversation?.assignedToUserId) return false;
+    if (!currentUser?.id) return false;
+    return Number(activeConversation.assignedToUserId) !== Number(currentUser.id);
+  }, [activeConversation, currentUser]);
+
+  // Текущий пользователь является оператором этого диалога
+  const isAssignedToMe = useMemo(() => {
+    if (!activeConversation?.assignedToUserId) return false;
+    if (!currentUser?.id) return false;
+    return Number(activeConversation.assignedToUserId) === Number(currentUser.id);
+  }, [activeConversation, currentUser]);
+
   useEffect(() => {
     const element = messagesRef.current;
     if (!element) return;
@@ -67,7 +83,7 @@ export default function SupportPanel({
   async function submit(event) {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || !activeConversation || sending) return;
+    if (!text || !activeConversation || sending || isAssignedToOther) return;
 
     try {
       await onSend(activeConversation.id, text);
@@ -101,34 +117,55 @@ export default function SupportPanel({
           </div>
         ) : (
           <div className="support-panel__conversations">
-            {conversations.map((conversation) => (
-              <button
-                key={conversation.id}
-                type="button"
-                className={`support-conversation ${
-                  Number(activeConversationId) === Number(conversation.id)
-                    ? "active"
-                    : ""
-                }`}
-                onClick={() => onOpenConversation(conversation.id)}
-              >
-                <div className="support-conversation__avatar">
-                  <FiLifeBuoy />
-                </div>
-                <div className="support-conversation__body">
-                  <div className="support-conversation__top">
-                    <strong>{conversationTitle(conversation)}</strong>
-                    <span>{formatTime(conversation.updatedAt)}</span>
+            {conversations.map((conversation) => {
+              const isOccupied =
+                conversation.assignedToUserId &&
+                Number(conversation.assignedToUserId) !== Number(currentUser?.id);
+              const isMine =
+                conversation.assignedToUserId &&
+                Number(conversation.assignedToUserId) === Number(currentUser?.id);
+
+              return (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  className={`support-conversation ${
+                    Number(activeConversationId) === Number(conversation.id)
+                      ? "active"
+                      : ""
+                  } ${isOccupied ? "support-conversation--occupied" : ""}`}
+                  onClick={() => onOpenConversation(conversation.id)}
+                >
+                  <div className="support-conversation__avatar">
+                    <FiLifeBuoy />
                   </div>
-                  <div className="support-conversation__bottom">
-                    <span>{conversationPreview(conversation)}</span>
-                    {conversation.unreadCount > 0 && (
-                      <b>{conversation.unreadCount}</b>
+                  <div className="support-conversation__body">
+                    <div className="support-conversation__top">
+                      <strong>{conversationTitle(conversation)}</strong>
+                      <span>{formatTime(conversation.updatedAt)}</span>
+                    </div>
+                    <div className="support-conversation__bottom">
+                      <span>{conversationPreview(conversation)}</span>
+                      {conversation.unreadCount > 0 && (
+                        <b>{conversation.unreadCount}</b>
+                      )}
+                    </div>
+                    {isOccupied && (
+                      <div className="support-conversation__operator">
+                        <FiUser size={10} />
+                        {conversation.assignedToName || "Оператор"}
+                      </div>
+                    )}
+                    {isMine && (
+                      <div className="support-conversation__operator support-conversation__operator--mine">
+                        <FiUser size={10} />
+                        Вы
+                      </div>
                     )}
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -158,7 +195,31 @@ export default function SupportPanel({
                     "Чат с сайта"}
                 </span>
               </div>
+
+              {/* Кнопка "Освободить" — только если диалог ведёт текущий оператор */}
+              {isAssignedToMe && onUnassign && (
+                <button
+                  type="button"
+                  className="support-panel__unassign"
+                  title="Освободить диалог"
+                  onClick={() => onUnassign(activeConversation.id)}
+                >
+                  <FiUnlock size={16} />
+                  <span>Освободить</span>
+                </button>
+              )}
             </header>
+
+            {/* Баннер "занято другим оператором" */}
+            {isAssignedToOther && (
+              <div className="support-panel__occupied-banner">
+                <FiUser />
+                <span>
+                  Этот диалог ведёт{" "}
+                  <strong>{activeConversation.assignedToName || "другой оператор"}</strong>
+                </span>
+              </div>
+            )}
 
             <div className="support-panel__messages" ref={messagesRef}>
               {loadingMessages ? (
@@ -194,21 +255,27 @@ export default function SupportPanel({
 
             {error && <div className="support-panel__error">{error}</div>}
 
-            <form className="support-panel__composer" onSubmit={submit}>
-              <input
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                placeholder="Ответить посетителю…"
-                disabled={sending}
-              />
-              <button
-                type="submit"
-                disabled={sending || !draft.trim()}
-                aria-label="Отправить"
-              >
-                <FiSend />
-              </button>
-            </form>
+            {isAssignedToOther ? (
+              <div className="support-panel__composer support-panel__composer--blocked">
+                <span>Ответ недоступен — диалог ведёт другой оператор</span>
+              </div>
+            ) : (
+              <form className="support-panel__composer" onSubmit={submit}>
+                <input
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  placeholder="Ответить посетителю…"
+                  disabled={sending}
+                />
+                <button
+                  type="submit"
+                  disabled={sending || !draft.trim()}
+                  aria-label="Отправить"
+                >
+                  <FiSend />
+                </button>
+              </form>
+            )}
           </>
         ) : (
           <div className="support-panel__welcome">

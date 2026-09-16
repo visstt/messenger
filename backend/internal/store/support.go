@@ -11,13 +11,15 @@ import (
 )
 
 type SupportConversation struct {
-	ID           int64     `json:"id"`
-	ExternalID   string    `json:"externalId"`
-	VisitorName  string    `json:"visitorName"`
-	VisitorPhone string    `json:"visitorPhone"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID               int64     `json:"id"`
+	ExternalID       string    `json:"externalId"`
+	VisitorName      string    `json:"visitorName"`
+	VisitorPhone     string    `json:"visitorPhone"`
+	Status           string    `json:"status"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+	AssignedToUserID *int64    `json:"assignedToUserId,omitempty"`
+	AssignedToName   string    `json:"assignedToName,omitempty"`
 }
 
 type SupportMessage struct {
@@ -90,15 +92,18 @@ func (s *Store) GetSupportConversation(
 
 	err := s.db.QueryRow(ctx, `
 		SELECT
-			id,
-			external_id,
-			visitor_name,
-			visitor_phone,
-			status,
-			created_at,
-			updated_at
-		FROM support_conversations
-		WHERE id = $1
+			sc.id,
+			sc.external_id,
+			sc.visitor_name,
+			sc.visitor_phone,
+			sc.status,
+			sc.created_at,
+			sc.updated_at,
+			sc.assigned_to_user_id,
+			COALESCE(u.name, '') as assigned_to_name
+		FROM support_conversations sc
+		LEFT JOIN users u ON u.id = sc.assigned_to_user_id
+		WHERE sc.id = $1
 	`, conversationID).Scan(
 		&conversation.ID,
 		&conversation.ExternalID,
@@ -107,6 +112,8 @@ func (s *Store) GetSupportConversation(
 		&conversation.Status,
 		&conversation.CreatedAt,
 		&conversation.UpdatedAt,
+		&conversation.AssignedToUserID,
+		&conversation.AssignedToName,
 	)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -121,15 +128,18 @@ func (s *Store) ListSupportConversations(
 ) ([]SupportConversation, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT
-			id,
-			external_id,
-			visitor_name,
-			visitor_phone,
-			status,
-			created_at,
-			updated_at
-		FROM support_conversations
-		ORDER BY updated_at DESC
+			sc.id,
+			sc.external_id,
+			sc.visitor_name,
+			sc.visitor_phone,
+			sc.status,
+			sc.created_at,
+			sc.updated_at,
+			sc.assigned_to_user_id,
+			COALESCE(u.name, '') as assigned_to_name
+		FROM support_conversations sc
+		LEFT JOIN users u ON u.id = sc.assigned_to_user_id
+		ORDER BY sc.updated_at DESC
 	`)
 	if err != nil {
 		return nil, err
@@ -149,6 +159,8 @@ func (s *Store) ListSupportConversations(
 			&item.Status,
 			&item.CreatedAt,
 			&item.UpdatedAt,
+			&item.AssignedToUserID,
+			&item.AssignedToName,
 		); err != nil {
 			return nil, err
 		}
@@ -157,6 +169,33 @@ func (s *Store) ListSupportConversations(
 	}
 
 	return items, rows.Err()
+}
+
+// AssignSupportConversation назначает диалог на оператора.
+func (s *Store) AssignSupportConversation(
+	ctx context.Context,
+	conversationID int64,
+	userID int64,
+) error {
+	_, err := s.db.Exec(ctx, `
+		UPDATE support_conversations
+		SET assigned_to_user_id = $2, updated_at = NOW()
+		WHERE id = $1
+	`, conversationID, userID)
+	return err
+}
+
+// UnassignSupportConversation снимает назначение с диалога.
+func (s *Store) UnassignSupportConversation(
+	ctx context.Context,
+	conversationID int64,
+) error {
+	_, err := s.db.Exec(ctx, `
+		UPDATE support_conversations
+		SET assigned_to_user_id = NULL, updated_at = NOW()
+		WHERE id = $1
+	`, conversationID)
+	return err
 }
 
 func (s *Store) CreateSupportMessage(

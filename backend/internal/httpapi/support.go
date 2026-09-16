@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"messenger/backend/internal/push"
 	"messenger/backend/internal/realtime"
 	"messenger/backend/internal/store"
 
@@ -29,6 +30,10 @@ type supportConversationRequest struct {
 
 type supportEvent struct {
 	Message      store.SupportMessage      `json:"message"`
+	Conversation store.SupportConversation `json:"conversation"`
+}
+
+type supportAssignedEvent struct {
 	Conversation store.SupportConversation `json:"conversation"`
 }
 
@@ -148,6 +153,24 @@ func (s *Server) handleSupportCreateMessage(
 		return
 	}
 
+	// Проверяем блокировку: если диалог назначен на другого оператора — запрещаем
+	if conversation.AssignedToUserID != nil && *conversation.AssignedToUserID != userID {
+		writeError(w, http.StatusConflict, "conversation is handled by another operator")
+		return
+	}
+
+	// Автоматически назначаем диалог на оператора при первом ответе
+	newlyAssigned := false
+	if conversation.AssignedToUserID == nil {
+		if err := s.store.AssignSupportConversation(r.Context(), conversationID, userID); err != nil {
+			log.Printf("failed to assign support conversation: %v", err)
+		} else {
+			newlyAssigned = true
+			// Обновляем локальную копию
+			conversation.AssignedToUserID = &userID
+		}
+	}
+
 	message, err := s.store.CreateSupportMessage(
 		r.Context(),
 		conversationID,
@@ -171,14 +194,20 @@ func (s *Server) handleSupportCreateMessage(
 		)
 	}
 
-	// Уведомляем остальных операторов поддержки.
+	// Получаем обновлённую версию conversation (с именем оператора)
+	updatedConv, convErr := s.store.GetSupportConversation(r.Context(), conversationID)
+	if convErr != nil {
+		updatedConv = conversation
+	}
+
+	// Уведомляем остальных операторов поддержки о новом сообщении.
 	workerIDs, err := s.store.ListSupportWorkerIDs(r.Context())
 	if err == nil {
-		event := realtime.Event{
+		msgEvent := realtime.Event{
 			Type: "support:message",
 			Data: supportEvent{
 				Message:      message,
-				Conversation: conversation,
+				Conversation: updatedConv,
 			},
 		}
 
@@ -187,7 +216,20 @@ func (s *Server) handleSupportCreateMessage(
 				continue
 			}
 
-			s.hub.BroadcastToUser(workerID, event)
+			s.hub.BroadcastToUser(workerID, msgEvent)
+		}
+
+		// Если только что назначили — рассылаем событие назначения всем операторам
+		if newlyAssigned {
+			assignedEvent := realtime.Event{
+				Type: "support:conversation:assigned",
+				Data: supportAssignedEvent{
+					Conversation: updatedConv,
+				},
+			}
+			for _, workerID := range workerIDs {
+				s.hub.BroadcastToUser(workerID, assignedEvent)
+			}
 		}
 	}
 
@@ -318,12 +360,86 @@ func (s *Server) handleSupportCreateVisitorMessage(
 		for _, workerID := range workerIDs {
 			s.hub.BroadcastToUser(workerID, event)
 		}
+
+		// Web Push уведомление операторам
+		s.pushSupportNotification(r.Context(), workerIDs, conversation, message)
+	}
+
+	// Уведомляем бота Макс о новом сообщении клиента
+	if err := s.notifyMaxBot(r.Context(), conversation, message); err != nil {
+		log.Printf("failed to notify Max bot about support message: %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"conversation": conversation,
 		"message":      message,
 	})
+}
+
+// handleSupportUnassign освобождает диалог (снимает оператора).
+func (s *Server) handleSupportUnassign(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	userID := currentUserID(r.Context())
+
+	isWorker, err := s.store.IsSupportWorker(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check support access")
+		return
+	}
+	if !isWorker {
+		writeError(w, http.StatusForbidden, "support access required")
+		return
+	}
+
+	conversationID, err := strconv.ParseInt(
+		chi.URLParam(r, "conversationID"),
+		10,
+		64,
+	)
+	if err != nil || conversationID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid conversation id")
+		return
+	}
+
+	conversation, err := s.store.GetSupportConversation(r.Context(), conversationID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "conversation not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load conversation")
+		return
+	}
+
+	// Только сам оператор может снять себя
+	if conversation.AssignedToUserID == nil || *conversation.AssignedToUserID != userID {
+		writeError(w, http.StatusForbidden, "you are not the assigned operator")
+		return
+	}
+
+	if err := s.store.UnassignSupportConversation(r.Context(), conversationID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to unassign conversation")
+		return
+	}
+
+	// Уведомляем всех операторов
+	updatedConv, _ := s.store.GetSupportConversation(r.Context(), conversationID)
+	workerIDs, listErr := s.store.ListSupportWorkerIDs(r.Context())
+	if listErr == nil {
+		assignedEvent := realtime.Event{
+			Type: "support:conversation:assigned",
+			Data: supportAssignedEvent{
+				Conversation: updatedConv,
+			},
+		}
+		for _, wID := range workerIDs {
+			s.hub.BroadcastToUser(wID, assignedEvent)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleAdminListSupportWorkers(
@@ -454,6 +570,94 @@ func (s *Server) sendSupportMessageToMedik(
 			"SD Медик returned status %s",
 			resp.Status,
 		)
+	}
+
+	return nil
+}
+
+// pushSupportNotification отправляет Web Push уведомление операторам о новом сообщении клиента.
+func (s *Server) pushSupportNotification(
+	ctx context.Context,
+	workerIDs []int64,
+	conversation store.SupportConversation,
+	message store.SupportMessage,
+) {
+	if !s.pusher.Enabled() || len(workerIDs) == 0 {
+		return
+	}
+
+	visitorName := conversation.VisitorName
+	if visitorName == "" {
+		visitorName = fmt.Sprintf("Посетитель #%d", conversation.ID)
+	}
+
+	preview := message.Text
+	if len(preview) > 80 {
+		preview = preview[:80] + "…"
+	}
+
+	payload := push.NotifyPayload{
+		Title: "Поддержка: " + visitorName,
+		Body:  preview,
+		URL:   "/",
+	}
+
+	go s.pusher.SendToUsers(ctx, workerIDs, payload)
+}
+
+// notifyMaxBot уведомляет бота Макс о новом сообщении от клиента.
+func (s *Server) notifyMaxBot(
+	ctx context.Context,
+	conversation store.SupportConversation,
+	message store.SupportMessage,
+) error {
+	if s.cfg.MaxBotURL == "" {
+		return nil // Бот не настроен — просто пропускаем
+	}
+
+	visitorName := conversation.VisitorName
+	if visitorName == "" {
+		visitorName = fmt.Sprintf("Посетитель #%d", conversation.ID)
+	}
+
+	payload := map[string]any{
+		"external_id":  conversation.ExternalID,
+		"visitor_name": visitorName,
+		"message":      message.Text,
+		"conversation_id": conversation.ID,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to encode max bot payload: %w", err)
+	}
+
+	url := strings.TrimRight(s.cfg.MaxBotURL, "/") + "/bot/support/notify"
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		url,
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create max bot request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if s.cfg.MaxBotSecret != "" {
+		req.Header.Set("X-Bot-Secret", s.cfg.MaxBotSecret)
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to notify Max bot: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("Max bot returned status %s", resp.Status)
 	}
 
 	return nil
