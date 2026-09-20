@@ -37,6 +37,17 @@ type supportAssignedEvent struct {
 	Conversation store.SupportConversation `json:"conversation"`
 }
 
+type supportMaxClaimRequest struct {
+	ConversationID int64  `json:"conversation_id"`
+	MaxUserID      int64  `json:"max_user_id"`
+	MaxUserName    string `json:"max_user_name"`
+}
+
+type supportMaxReplyRequest struct {
+	MaxUserID int64  `json:"max_user_id"`
+	Text      string `json:"text"`
+}
+
 func (s *Server) handleSupportListConversations(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -153,22 +164,31 @@ func (s *Server) handleSupportCreateMessage(
 		return
 	}
 
-	// Проверяем блокировку: если диалог назначен на другого оператора — запрещаем
+	// Если диалог уже занят другим оператором или MAX — запрещаем ответ.
 	if conversation.AssignedToUserID != nil && *conversation.AssignedToUserID != userID {
 		writeError(w, http.StatusConflict, "conversation is handled by another operator")
 		return
 	}
+	if conversation.AssignedMaxUserID != nil {
+		writeError(w, http.StatusConflict, "conversation is handled by a MAX operator")
+		return
+	}
 
-	// Автоматически назначаем диалог на оператора при первом ответе
+	// Атомарно назначаем свободный диалог. Это защищает от гонки Messenger vs MAX.
 	newlyAssigned := false
 	if conversation.AssignedToUserID == nil {
-		if err := s.store.AssignSupportConversation(r.Context(), conversationID, userID); err != nil {
+		assigned, err := s.store.AssignSupportConversation(r.Context(), conversationID, userID)
+		if err != nil {
 			log.Printf("failed to assign support conversation: %v", err)
-		} else {
-			newlyAssigned = true
-			// Обновляем локальную копию
-			conversation.AssignedToUserID = &userID
+			writeError(w, http.StatusInternalServerError, "failed to assign conversation")
+			return
 		}
+		if !assigned {
+			writeError(w, http.StatusConflict, "conversation is already handled by another operator")
+			return
+		}
+		newlyAssigned = true
+		conversation.AssignedToUserID = &userID
 	}
 
 	message, err := s.store.CreateSupportMessage(
@@ -374,6 +394,194 @@ func (s *Server) handleSupportCreateVisitorMessage(
 		"conversation": conversation,
 		"message":      message,
 	})
+}
+
+// handleSupportMaxClaim атомарно забирает свободный диалог оператором MAX.
+func (s *Server) handleSupportMaxClaim(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.MaxBotSecret == "" || r.Header.Get("X-Bot-Secret") != s.cfg.MaxBotSecret {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var input supportMaxClaimRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if input.ConversationID <= 0 || input.MaxUserID <= 0 {
+		writeError(w, http.StatusBadRequest, "conversation_id and max_user_id are required")
+		return
+	}
+
+	conversation, err := s.store.GetSupportConversation(r.Context(), input.ConversationID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "conversation not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load conversation")
+		return
+	}
+
+	if conversation.Status != "open" {
+		writeError(w, http.StatusConflict, "conversation is closed")
+		return
+	}
+
+	if conversation.AssignedToUserID != nil || conversation.AssignedMaxUserID != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"ok":           false,
+			"error":        "conversation is already handled",
+			"conversation": conversation,
+		})
+		return
+	}
+
+	assigned, err := s.store.AssignSupportConversationToMax(
+		r.Context(), input.ConversationID, input.MaxUserID, input.MaxUserName,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to assign conversation")
+		return
+	}
+	if !assigned {
+		conversation, _ = s.store.GetSupportConversation(r.Context(), input.ConversationID)
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"ok":           false,
+			"error":        "conversation is already handled",
+			"conversation": conversation,
+		})
+		return
+	}
+
+	conversation, _ = s.store.GetSupportConversation(r.Context(), input.ConversationID)
+	workerIDs, listErr := s.store.ListSupportWorkerIDs(r.Context())
+	if listErr == nil {
+		event := realtime.Event{
+			Type: "support:conversation:assigned",
+			Data: supportAssignedEvent{Conversation: conversation},
+		}
+		for _, workerID := range workerIDs {
+			s.hub.BroadcastToUser(workerID, event)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"conversation": conversation,
+	})
+}
+
+// handleSupportMaxReply принимает ответ оператора MAX и доставляет его клиенту.
+func (s *Server) handleSupportMaxReply(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.MaxBotSecret == "" || r.Header.Get("X-Bot-Secret") != s.cfg.MaxBotSecret {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var input supportMaxReplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	input.Text = strings.TrimSpace(input.Text)
+	if input.MaxUserID <= 0 || input.Text == "" {
+		writeError(w, http.StatusBadRequest, "max_user_id and text are required")
+		return
+	}
+
+	conversation, err := s.store.GetSupportConversationByMaxUserID(r.Context(), input.MaxUserID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusConflict, "no active support conversation")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load conversation")
+		return
+	}
+
+	message, err := s.store.CreateSupportMessage(
+		r.Context(), conversation.ID, "worker", nil, input.Text,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save message")
+		return
+	}
+
+	if err := s.sendSupportMessageToMedik(r.Context(), conversation.ExternalID, input.Text); err != nil {
+		log.Printf("failed to send MAX support message to SD Медик: %v", err)
+		writeError(w, http.StatusBadGateway, "failed to send message to client")
+		return
+	}
+
+	updatedConv, convErr := s.store.GetSupportConversation(r.Context(), conversation.ID)
+	if convErr != nil {
+		updatedConv = conversation
+	}
+
+	workerIDs, listErr := s.store.ListSupportWorkerIDs(r.Context())
+	if listErr == nil {
+		event := realtime.Event{
+			Type: "support:message",
+			Data: supportEvent{Message: message, Conversation: updatedConv},
+		}
+		for _, workerID := range workerIDs {
+			s.hub.BroadcastToUser(workerID, event)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"message":      message,
+		"conversation": updatedConv,
+	})
+}
+
+// handleSupportMaxUnassign освобождает диалог, назначенный MAX-оператору.
+func (s *Server) handleSupportMaxUnassign(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.MaxBotSecret == "" || r.Header.Get("X-Bot-Secret") != s.cfg.MaxBotSecret {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var input struct {
+		ConversationID int64 `json:"conversation_id"`
+		MaxUserID      int64 `json:"max_user_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	conversation, err := s.store.GetSupportConversation(r.Context(), input.ConversationID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "conversation not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load conversation")
+		return
+	}
+	if conversation.AssignedMaxUserID == nil || *conversation.AssignedMaxUserID != input.MaxUserID {
+		writeError(w, http.StatusForbidden, "you are not the assigned MAX operator")
+		return
+	}
+
+	if err := s.store.UnassignSupportConversation(r.Context(), input.ConversationID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to unassign conversation")
+		return
+	}
+
+	updatedConv, _ := s.store.GetSupportConversation(r.Context(), input.ConversationID)
+	workerIDs, listErr := s.store.ListSupportWorkerIDs(r.Context())
+	if listErr == nil {
+		event := realtime.Event{Type: "support:conversation:assigned", Data: supportAssignedEvent{Conversation: updatedConv}}
+		for _, workerID := range workerIDs {
+			s.hub.BroadcastToUser(workerID, event)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "conversation": updatedConv})
 }
 
 // handleSupportUnassign освобождает диалог (снимает оператора).
@@ -621,10 +829,14 @@ func (s *Server) notifyMaxBot(
 	}
 
 	payload := map[string]any{
-		"external_id":  conversation.ExternalID,
-		"visitor_name": visitorName,
-		"message":      message.Text,
-		"conversation_id": conversation.ID,
+		"external_id":            conversation.ExternalID,
+		"visitor_name":           visitorName,
+		"message":                message.Text,
+		"conversation_id":        conversation.ID,
+		"assigned_max_user_id":   conversation.AssignedMaxUserID,
+		"assigned_max_user_name": conversation.AssignedMaxUserName,
+		"assigned_to_user_id":    conversation.AssignedToUserID,
+		"assigned_to_name":       conversation.AssignedToName,
 	}
 
 	body, err := json.Marshal(payload)

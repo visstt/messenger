@@ -62,13 +62,15 @@ export default function SupportPanel({
 
   // Определяем: занят ли диалог другим оператором
   const isAssignedToOther = useMemo(() => {
+    if (activeConversation?.assignedMaxUserId) return true;
     if (!activeConversation?.assignedToUserId) return false;
-    if (!currentUser?.id) return false;
+    if (!currentUser?.id) return true;
     return Number(activeConversation.assignedToUserId) !== Number(currentUser.id);
   }, [activeConversation, currentUser]);
 
   // Текущий пользователь является оператором этого диалога
   const isAssignedToMe = useMemo(() => {
+    if (activeConversation?.assignedMaxUserId) return false;
     if (!activeConversation?.assignedToUserId) return false;
     if (!currentUser?.id) return false;
     return Number(activeConversation.assignedToUserId) === Number(currentUser.id);
@@ -119,9 +121,11 @@ export default function SupportPanel({
           <div className="support-panel__conversations">
             {conversations.map((conversation) => {
               const isOccupied =
-                conversation.assignedToUserId &&
-                Number(conversation.assignedToUserId) !== Number(currentUser?.id);
+                conversation.assignedMaxUserId ||
+                (conversation.assignedToUserId &&
+                  Number(conversation.assignedToUserId) !== Number(currentUser?.id));
               const isMine =
+                !conversation.assignedMaxUserId &&
                 conversation.assignedToUserId &&
                 Number(conversation.assignedToUserId) === Number(currentUser?.id);
 
@@ -153,7 +157,7 @@ export default function SupportPanel({
                     {isOccupied && (
                       <div className="support-conversation__operator">
                         <FiUser size={10} />
-                        {conversation.assignedToName || "Оператор"}
+                        {conversation.assignedMaxUserName || conversation.assignedToName || "Оператор"}
                       </div>
                     )}
                     {isMine && (
@@ -216,7 +220,7 @@ export default function SupportPanel({
                 <FiUser />
                 <span>
                   Этот диалог ведёт{" "}
-                  <strong>{activeConversation.assignedToName || "другой оператор"}</strong>
+                  <strong>{activeConversation.assignedMaxUserName || activeConversation.assignedToName || "другой оператор"}</strong>
                 </span>
               </div>
             )}

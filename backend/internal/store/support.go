@@ -11,15 +11,17 @@ import (
 )
 
 type SupportConversation struct {
-	ID               int64     `json:"id"`
-	ExternalID       string    `json:"externalId"`
-	VisitorName      string    `json:"visitorName"`
-	VisitorPhone     string    `json:"visitorPhone"`
-	Status           string    `json:"status"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
-	AssignedToUserID *int64    `json:"assignedToUserId,omitempty"`
-	AssignedToName   string    `json:"assignedToName,omitempty"`
+	ID                  int64     `json:"id"`
+	ExternalID          string    `json:"externalId"`
+	VisitorName         string    `json:"visitorName"`
+	VisitorPhone        string    `json:"visitorPhone"`
+	Status              string    `json:"status"`
+	CreatedAt           time.Time `json:"createdAt"`
+	UpdatedAt           time.Time `json:"updatedAt"`
+	AssignedToUserID    *int64    `json:"assignedToUserId,omitempty"`
+	AssignedToName      string    `json:"assignedToName,omitempty"`
+	AssignedMaxUserID   *int64    `json:"assignedMaxUserId,omitempty"`
+	AssignedMaxUserName string    `json:"assignedMaxUserName,omitempty"`
 }
 
 type SupportMessage struct {
@@ -100,7 +102,9 @@ func (s *Store) GetSupportConversation(
 			sc.created_at,
 			sc.updated_at,
 			sc.assigned_to_user_id,
-			COALESCE(u.name, '') as assigned_to_name
+			COALESCE(u.name, '') as assigned_to_name,
+			sc.assigned_max_user_id,
+			sc.assigned_max_user_name
 		FROM support_conversations sc
 		LEFT JOIN users u ON u.id = sc.assigned_to_user_id
 		WHERE sc.id = $1
@@ -114,6 +118,8 @@ func (s *Store) GetSupportConversation(
 		&conversation.UpdatedAt,
 		&conversation.AssignedToUserID,
 		&conversation.AssignedToName,
+		&conversation.AssignedMaxUserID,
+		&conversation.AssignedMaxUserName,
 	)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -136,7 +142,9 @@ func (s *Store) ListSupportConversations(
 			sc.created_at,
 			sc.updated_at,
 			sc.assigned_to_user_id,
-			COALESCE(u.name, '') as assigned_to_name
+			COALESCE(u.name, '') as assigned_to_name,
+			sc.assigned_max_user_id,
+			sc.assigned_max_user_name
 		FROM support_conversations sc
 		LEFT JOIN users u ON u.id = sc.assigned_to_user_id
 		ORDER BY sc.updated_at DESC
@@ -161,6 +169,8 @@ func (s *Store) ListSupportConversations(
 			&item.UpdatedAt,
 			&item.AssignedToUserID,
 			&item.AssignedToName,
+			&item.AssignedMaxUserID,
+			&item.AssignedMaxUserName,
 		); err != nil {
 			return nil, err
 		}
@@ -171,18 +181,104 @@ func (s *Store) ListSupportConversations(
 	return items, rows.Err()
 }
 
-// AssignSupportConversation назначает диалог на оператора.
+// AssignSupportConversation атомарно назначает свободный диалог оператору Messenger.
+// Если диалог уже занят Messenger- или MAX-оператором, affected=false.
 func (s *Store) AssignSupportConversation(
 	ctx context.Context,
 	conversationID int64,
 	userID int64,
-) error {
-	_, err := s.db.Exec(ctx, `
+) (bool, error) {
+	var id int64
+	err := s.db.QueryRow(ctx, `
 		UPDATE support_conversations
-		SET assigned_to_user_id = $2, updated_at = NOW()
+		SET assigned_to_user_id = $2,
+		    assigned_max_user_id = NULL,
+		    assigned_max_user_name = '',
+		    updated_at = NOW()
 		WHERE id = $1
-	`, conversationID, userID)
-	return err
+		  AND assigned_to_user_id IS NULL
+		  AND assigned_max_user_id IS NULL
+		RETURNING id
+	`, conversationID, userID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return id == conversationID, nil
+}
+
+// AssignSupportConversationToMax атомарно назначает свободный диалог MAX-оператору.
+func (s *Store) AssignSupportConversationToMax(
+	ctx context.Context,
+	conversationID int64,
+	maxUserID int64,
+	maxUserName string,
+) (bool, error) {
+	var id int64
+	err := s.db.QueryRow(ctx, `
+		UPDATE support_conversations
+		SET assigned_max_user_id = $2,
+		    assigned_max_user_name = $3,
+		    assigned_to_user_id = NULL,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND assigned_to_user_id IS NULL
+		  AND assigned_max_user_id IS NULL
+		RETURNING id
+	`, conversationID, maxUserID, strings.TrimSpace(maxUserName)).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return id == conversationID, nil
+}
+
+// GetSupportConversationByMaxUserID возвращает открытый диалог, назначенный MAX-оператору.
+func (s *Store) GetSupportConversationByMaxUserID(
+	ctx context.Context,
+	maxUserID int64,
+) (SupportConversation, error) {
+	var conversation SupportConversation
+	err := s.db.QueryRow(ctx, `
+		SELECT
+			sc.id,
+			sc.external_id,
+			sc.visitor_name,
+			sc.visitor_phone,
+			sc.status,
+			sc.created_at,
+			sc.updated_at,
+			sc.assigned_to_user_id,
+			COALESCE(u.name, '') as assigned_to_name,
+			sc.assigned_max_user_id,
+			sc.assigned_max_user_name
+		FROM support_conversations sc
+		LEFT JOIN users u ON u.id = sc.assigned_to_user_id
+		WHERE sc.assigned_max_user_id = $1
+		  AND sc.status = 'open'
+		ORDER BY sc.updated_at DESC
+		LIMIT 1
+	`, maxUserID).Scan(
+		&conversation.ID,
+		&conversation.ExternalID,
+		&conversation.VisitorName,
+		&conversation.VisitorPhone,
+		&conversation.Status,
+		&conversation.CreatedAt,
+		&conversation.UpdatedAt,
+		&conversation.AssignedToUserID,
+		&conversation.AssignedToName,
+		&conversation.AssignedMaxUserID,
+		&conversation.AssignedMaxUserName,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SupportConversation{}, ErrNotFound
+	}
+	return conversation, err
 }
 
 // UnassignSupportConversation снимает назначение с диалога.
@@ -192,7 +288,10 @@ func (s *Store) UnassignSupportConversation(
 ) error {
 	_, err := s.db.Exec(ctx, `
 		UPDATE support_conversations
-		SET assigned_to_user_id = NULL, updated_at = NOW()
+		SET assigned_to_user_id = NULL,
+		    assigned_max_user_id = NULL,
+		    assigned_max_user_name = '',
+		    updated_at = NOW()
 		WHERE id = $1
 	`, conversationID)
 	return err
@@ -393,14 +492,19 @@ func (s *Store) GetSupportConversationByExternalID(
 		ctx,
 		`
 		SELECT
-			id,
-			external_id,
-			visitor_name,
-			visitor_phone,
-			status,
-			created_at,
-			updated_at
-		FROM support_conversations
+			sc.id,
+			sc.external_id,
+			sc.visitor_name,
+			sc.visitor_phone,
+			sc.status,
+			sc.created_at,
+			sc.updated_at,
+			sc.assigned_to_user_id,
+			COALESCE(u.name, '') as assigned_to_name,
+			sc.assigned_max_user_id,
+			sc.assigned_max_user_name
+		FROM support_conversations sc
+		LEFT JOIN users u ON u.id = sc.assigned_to_user_id
 		WHERE external_id = $1
 		`,
 		externalID,
@@ -412,6 +516,10 @@ func (s *Store) GetSupportConversationByExternalID(
 		&conversation.Status,
 		&conversation.CreatedAt,
 		&conversation.UpdatedAt,
+		&conversation.AssignedToUserID,
+		&conversation.AssignedToName,
+		&conversation.AssignedMaxUserID,
+		&conversation.AssignedMaxUserName,
 	)
 
 	if err != nil {

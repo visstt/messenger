@@ -110,6 +110,18 @@ func NewServer(cfg config.Config, st *store.Store, hub *realtime.Hub, uploader s
 		"/api/internal/support/messages",
 		s.handleSupportCreateVisitorMessage,
 	)
+	r.Post(
+		"/api/internal/support/max/claim",
+		s.handleSupportMaxClaim,
+	)
+	r.Post(
+		"/api/internal/support/max/reply",
+		s.handleSupportMaxReply,
+	)
+	r.Post(
+		"/api/internal/support/max/unassign",
+		s.handleSupportMaxUnassign,
+	)
 
 	r.Group(func(admin chi.Router) {
 		admin.Use(s.adminAuthMiddleware)

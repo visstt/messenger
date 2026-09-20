@@ -223,13 +223,15 @@ export default function App() {
 
         const items = normalizeSupportConversations(data);
         setSupportWorker(true);
-        setSupportConversations(items);
-        setSupportUnreadCount(
-          items.reduce(
-            (total, item) => total + Number(item.unreadCount || 0),
-            0
-          )
+        // Сохраняем накопленные счётчики непрочитанных из state —
+        // сервер не хранит unreadCount, они считаются только через realtime.
+        setSupportConversations((prev) =>
+          items.map((item) => {
+            const existing = prev.find((p) => Number(p.id) === Number(item.id));
+            return { ...item, unreadCount: existing?.unreadCount ?? 0 };
+          })
         );
+        // При первой загрузке (prev пуст) unreadCount везде будет 0 — это ок.
       } catch (err) {
         if (cancelled) return;
         // Endpoint закрыт для обычных пользователей — значит это не worker.
@@ -785,12 +787,13 @@ export default function App() {
       const data = await api.listSupportConversations();
       const items = normalizeSupportConversations(data);
       setSupportWorker(true);
-      setSupportConversations(items);
-      setSupportUnreadCount(
-        items.reduce(
-          (total, item) => total + Number(item.unreadCount || 0),
-          0
-        )
+      // Сохраняем накопленные счётчики непрочитанных из текущего state,
+      // т.к. сервер не хранит unreadCount — они считаются только через realtime.
+      setSupportConversations((prev) =>
+        items.map((item) => {
+          const existing = prev.find((p) => Number(p.id) === Number(item.id));
+          return { ...item, unreadCount: existing?.unreadCount ?? 0 };
+        })
       );
       return items;
     } finally {
@@ -886,7 +889,7 @@ export default function App() {
       setSupportConversations((prev) =>
         prev.map((conv) =>
           Number(conv.id) === Number(conversationId)
-            ? { ...conv, assignedToUserId: null, assignedToName: "" }
+            ? { ...conv, assignedToUserId: null, assignedToName: "", assignedMaxUserId: null, assignedMaxUserName: "" }
             : conv
         )
       );
